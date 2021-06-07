@@ -1,9 +1,11 @@
 using System.Collections.Generic;
 using System.Linq;
 using NLog;
+using NzbDrone.Core.Applications;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Lifecycle;
 using NzbDrone.Core.Messaging.Events;
+using NzbDrone.Core.ThingiProvider.Events;
 
 namespace NzbDrone.Core.Profiles
 {
@@ -19,19 +21,33 @@ namespace NzbDrone.Core.Profiles
     }
 
     public class AppSyncProfileService : IProfileService,
-        IHandle<ApplicationStartedEvent>
+        IHandle<ApplicationStartedEvent>,
+        IHandleAsync<ProviderDeletedEvent<IApplication>>
     {
         private readonly IAppProfileRepository _profileRepository;
+        private readonly IApplicationFactory _applicationFactory;
         private readonly IIndexerFactory _indexerFactory;
         private readonly Logger _logger;
 
         public AppSyncProfileService(IAppProfileRepository profileRepository,
+                              IApplicationFactory applicationFactory,
                               IIndexerFactory movieService,
                               Logger logger)
         {
             _profileRepository = profileRepository;
+            _applicationFactory = applicationFactory;
             _indexerFactory = movieService;
             _logger = logger;
+        }
+
+        public void HandleAsync(ProviderDeletedEvent<IApplication> message)
+        {
+            var profiles = _profileRepository.All().Where(x => x.ApplicationIDs.Contains(message.ProviderId));
+
+            foreach (var profile in profiles)
+            {
+                profile.ApplicationIDs.Remove(message.ProviderId);
+            }
         }
 
         public AppSyncProfile Add(AppSyncProfile profile)
@@ -88,7 +104,8 @@ namespace NzbDrone.Core.Profiles
                 Name = name,
                 EnableAutomaticSearch = true,
                 EnableInteractiveSearch = true,
-                EnableRss = true
+                EnableRss = true,
+                ApplicationIDs = _applicationFactory.All().Select(a => a.Id).ToList()
             };
 
             return qualityProfile;

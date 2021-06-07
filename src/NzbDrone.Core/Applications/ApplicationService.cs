@@ -8,6 +8,7 @@ using NzbDrone.Core.Configuration.Events;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Messaging.Events;
+using NzbDrone.Core.Profiles;
 using NzbDrone.Core.ThingiProvider.Events;
 
 namespace NzbDrone.Core.Applications
@@ -23,21 +24,30 @@ namespace NzbDrone.Core.Applications
         private readonly IApplicationFactory _applicationsFactory;
         private readonly IAppIndexerMapService _appIndexerMapService;
         private readonly IIndexerFactory _indexerFactory;
+        private readonly IProfileService _profileService;
         private readonly IApplicationStatusService _applicationStatusService;
         private readonly Logger _logger;
 
-        public ApplicationService(IApplicationFactory applicationsFactory, IApplicationStatusService applicationStatusService, IAppIndexerMapService appIndexerMapService, IIndexerFactory indexerFactory, Logger logger)
+        public ApplicationService(IApplicationFactory applicationsFactory, IApplicationStatusService applicationStatusService, IAppIndexerMapService appIndexerMapService, IIndexerFactory indexerFactory, IProfileService profileService, Logger logger)
         {
             _applicationsFactory = applicationsFactory;
             _applicationStatusService = applicationStatusService;
             _appIndexerMapService = appIndexerMapService;
             _indexerFactory = indexerFactory;
+            _profileService = profileService;
             _logger = logger;
         }
 
         public void HandleAsync(ProviderAddedEvent<IApplication> message)
         {
             var appDefinition = (ApplicationDefinition)message.Definition;
+
+            var profiles = _profileService.All();
+
+            foreach (var profile in profiles)
+            {
+                profile.ApplicationIDs.Add(appDefinition.Id);
+            }
 
             if (appDefinition.Enable)
             {
