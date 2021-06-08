@@ -141,51 +141,30 @@ namespace NzbDrone.Core.Applications.Sonarr
 
             var schema = protocol == DownloadProtocol.Usenet ? newznab : torznab;
 
-            var enableRss = false;
-            var enableAutoSearch = false;
-            var enableInteractiveSearch = false;
+            var enableRss = true;
+            var enableAutoSearch = true;
+            var enableInteractiveSearch = true;
 
-            if (indexer.AppProfile.Count > 1)
+            var enableRssEnabled = indexer.AppProfile.Any(x => x.Value.EnableRss);
+            var enableRssDisabled = indexer.AppProfile.Any(x => !x.Value.EnableRss);
+            var enableAutoSearchEnabled = indexer.AppProfile.Any(x => x.Value.EnableAutomaticSearch);
+            var enableAutoSearchDisabled = indexer.AppProfile.Any(x => !x.Value.EnableAutomaticSearch);
+            var enableInteractiveSearchEnabled = indexer.AppProfile.Any(x => x.Value.EnableInteractiveSearch);
+            var enableInteractiveSearchDisabled = indexer.AppProfile.Any(x => !x.Value.EnableInteractiveSearch);
+
+            if (!enableRssEnabled && enableRssDisabled)
             {
-                var enableRssEnabled = indexer.AppProfile.TrueForAll(x => x.Value.EnableRss);
-                var enableRssDisabled = indexer.AppProfile.TrueForAll(x => !x.Value.EnableRss);
-                var enableAutoSearchEnabled = indexer.AppProfile.TrueForAll(x => x.Value.EnableAutomaticSearch);
-                var enableAutoSearchDisabled = indexer.AppProfile.TrueForAll(x => !x.Value.EnableAutomaticSearch);
-                var enableInteractiveSearchEnabled = indexer.AppProfile.TrueForAll(x => x.Value.EnableInteractiveSearch);
-                var enableInteractiveSearchDisabled = indexer.AppProfile.TrueForAll(x => !x.Value.EnableInteractiveSearch);
-
-                if (enableRssEnabled && enableRssDisabled)
-                {
-                    enableRss = true;
-                }
-                else if (enableRssDisabled)
-                {
-                    enableRss = true;
-                }
-
-                if (enableAutoSearchEnabled && enableAutoSearchDisabled)
-                {
-                    enableAutoSearch = true;
-                }
-                else if (enableAutoSearchDisabled)
-                {
-                    enableAutoSearch = true;
-                }
-
-                if (enableInteractiveSearchEnabled && enableInteractiveSearchDisabled)
-                {
-                    enableInteractiveSearch = true;
-                }
-                else if (enableRssEnabled)
-                {
-                    enableInteractiveSearch = true;
-                }
+                enableRss = false;
             }
-            else
+
+            if (!enableAutoSearchEnabled && enableAutoSearchDisabled)
             {
-                enableRss = indexer.AppProfile[0].Value.EnableRss;
-                enableAutoSearch = indexer.AppProfile[0].Value.EnableAutomaticSearch;
-                enableInteractiveSearch = indexer.AppProfile[0].Value.EnableInteractiveSearch;
+                enableAutoSearch = false;
+            }
+
+            if (!enableInteractiveSearchEnabled && enableInteractiveSearchDisabled)
+            {
+                enableInteractiveSearch = false;
             }
 
             var sonarrIndexer = new SonarrIndexer
