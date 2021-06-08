@@ -14,24 +14,16 @@ namespace NzbDrone.Core.Datastore.Migration
     {
         protected override void MainDbUpgrade()
         {
-            Alter.Table("AppSyncProfiles").AddColumn("ApplicationIDs").AsString().WithDefaultValue("[]");
+            Alter.Table("AppSyncProfiles").AddColumn("ApplicationIds").AsString().WithDefaultValue("[]");
 
             Execute.WithConnection(AddApplications);
         }
 
         private void AddApplications(IDbConnection conn, IDbTransaction tran)
         {
-            var existing = conn.Query<AppId>("SELECT Id FROM Applications").ToList();
-
-            Console.WriteLine(existing);
-
-            var updateSql = "UPDATE AppSyncProfiles SET ApplicationIDs = @Id";
-            conn.Execute(updateSql, existing, transaction: tran);
-        }
-
-        private class AppId
-        {
-            public int Id { get; set; }
+            var appIdsQuery = conn.Query<int>("SELECT Id FROM Applications").ToList();
+            var updateSql = "UPDATE AppSyncProfiles SET ApplicationIds = @Id";
+            conn.Execute(updateSql, appIdsQuery, transaction: tran);
         }
     }
 }
