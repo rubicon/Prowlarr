@@ -24,7 +24,7 @@ namespace NzbDrone.Core.Indexers
         public bool Redirect { get; set; }
         public DateTime Added { get; set; }
         public int AppProfileId { get; set; }
-        public LazyLoaded<AppSyncProfile> AppProfile { get; set; }
+        public List<LazyLoaded<AppSyncProfile>> AppProfile { get; set; }
 
         public IndexerStatus Status { get; set; }
 

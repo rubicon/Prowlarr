@@ -133,13 +133,60 @@ namespace NzbDrone.Core.Applications.Lidarr
 
             var schema = protocol == DownloadProtocol.Usenet ? newznab : torznab;
 
+            var enableRss = false;
+            var enableAutoSearch = false;
+            var enableInteractiveSearch = false;
+
+            if (indexer.AppProfile.Count > 1)
+            {
+                var enableRssEnabled = indexer.AppProfile.TrueForAll(x => x.Value.EnableRss);
+                var enableRssDisabled = indexer.AppProfile.TrueForAll(x => !x.Value.EnableRss);
+                var enableAutoSearchEnabled = indexer.AppProfile.TrueForAll(x => x.Value.EnableAutomaticSearch);
+                var enableAutoSearchDisabled = indexer.AppProfile.TrueForAll(x => !x.Value.EnableAutomaticSearch);
+                var enableInteractiveSearchEnabled = indexer.AppProfile.TrueForAll(x => x.Value.EnableInteractiveSearch);
+                var enableInteractiveSearchDisabled = indexer.AppProfile.TrueForAll(x => !x.Value.EnableInteractiveSearch);
+
+                if (enableRssEnabled && enableRssDisabled)
+                {
+                    enableRss = true;
+                }
+                else if (enableRssDisabled)
+                {
+                    enableRss = true;
+                }
+
+                if (enableAutoSearchEnabled && enableAutoSearchDisabled)
+                {
+                    enableAutoSearch = true;
+                }
+                else if (enableAutoSearchDisabled)
+                {
+                    enableAutoSearch = true;
+                }
+
+                if (enableInteractiveSearchEnabled && enableInteractiveSearchDisabled)
+                {
+                    enableInteractiveSearch = true;
+                }
+                else if (enableRssEnabled)
+                {
+                    enableInteractiveSearch = true;
+                }
+            }
+            else
+            {
+                enableRss = indexer.AppProfile[0].Value.EnableRss;
+                enableAutoSearch = indexer.AppProfile[0].Value.EnableAutomaticSearch;
+                enableInteractiveSearch = indexer.AppProfile[0].Value.EnableInteractiveSearch;
+            }
+
             var lidarrIndexer = new LidarrIndexer
             {
                 Id = id,
                 Name = $"{indexer.Name} (Prowlarr)",
-                EnableRss = indexer.Enable && indexer.AppProfile.Value.EnableRss,
-                EnableAutomaticSearch = indexer.Enable && indexer.AppProfile.Value.EnableAutomaticSearch,
-                EnableInteractiveSearch = indexer.Enable && indexer.AppProfile.Value.EnableInteractiveSearch,
+                EnableRss = indexer.Enable && enableRss,
+                EnableAutomaticSearch = indexer.Enable && enableAutoSearch,
+                EnableInteractiveSearch = indexer.Enable && enableInteractiveSearch,
                 Priority = indexer.Priority,
                 Implementation = indexer.Protocol == DownloadProtocol.Usenet ? "Newznab" : "Torznab",
                 ConfigContract = schema.ConfigContract,
