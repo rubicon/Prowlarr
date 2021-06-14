@@ -9,30 +9,26 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using AngleSharp.Html.Parser;
-using FluentValidation;
 using Newtonsoft.Json.Linq;
 using NLog;
 using NzbDrone.Common.Http;
-using NzbDrone.Core.Annotations;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Indexers.Exceptions;
 using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
-using NzbDrone.Core.ThingiProvider;
-using NzbDrone.Core.Validation;
 
 namespace NzbDrone.Core.Indexers.Definitions
 {
     public class ZonaQ : TorrentIndexerBase<BasicAuthSettings>
     {
         public override string Name => "ZonaQ";
-        public override string BaseUrl => "https://www.zonaq.pw/";
-        private string Login1Url => BaseUrl + "index.php";
-        private string Login2Url => BaseUrl + "paDentro.php";
-        private string Login3Url => BaseUrl + "retorno/include/puerta_8_ajax.php";
-        private string Login4Url => BaseUrl + "retorno/index.php";
+        public override string[] IndexerUrls => new string[] { "https://www.zonaq.pw/" };
+        private string Login1Url => Settings.BaseUrl + "index.php";
+        private string Login2Url => Settings.BaseUrl + "paDentro.php";
+        private string Login3Url => Settings.BaseUrl + "retorno/include/puerta_8_ajax.php";
+        private string Login4Url => Settings.BaseUrl + "retorno/index.php";
         public override string Description => "ZonaQ is a SPANISH Private Torrent Tracker for MOVIES / TV";
         public override string Language => "es-es";
         public override Encoding Encoding => Encoding.UTF8;
@@ -47,12 +43,12 @@ namespace NzbDrone.Core.Indexers.Definitions
 
         public override IIndexerRequestGenerator GetRequestGenerator()
         {
-            return new ZonaQRequestGenerator() { Settings = Settings, Capabilities = Capabilities, BaseUrl = BaseUrl };
+            return new ZonaQRequestGenerator() { Settings = Settings, Capabilities = Capabilities };
         }
 
         public override IParseIndexerResponse GetParser()
         {
-            return new ZonaQParser(Settings, Capabilities.Categories, BaseUrl);
+            return new ZonaQParser(Settings, Capabilities.Categories);
         }
 
         protected override async Task DoLogin()
@@ -234,7 +230,6 @@ namespace NzbDrone.Core.Indexers.Definitions
     {
         public BasicAuthSettings Settings { get; set; }
         public IndexerCapabilities Capabilities { get; set; }
-        public string BaseUrl { get; set; }
 
         public ZonaQRequestGenerator()
         {
@@ -242,7 +237,7 @@ namespace NzbDrone.Core.Indexers.Definitions
 
         private IEnumerable<IndexerRequest> GetPagedRequests(string term, int[] categories)
         {
-            var searchUrl = string.Format("{0}/retorno/2/index.php", BaseUrl.TrimEnd('/'));
+            var searchUrl = string.Format("{0}/retorno/2/index.php", Settings.BaseUrl.TrimEnd('/'));
 
             var qc = new NameValueCollection
             {
@@ -317,13 +312,11 @@ namespace NzbDrone.Core.Indexers.Definitions
     {
         private readonly BasicAuthSettings _settings;
         private readonly IndexerCapabilitiesCategories _categories;
-        private readonly string _baseUrl;
 
-        public ZonaQParser(BasicAuthSettings settings, IndexerCapabilitiesCategories categories, string baseurl)
+        public ZonaQParser(BasicAuthSettings settings, IndexerCapabilitiesCategories categories)
         {
             _settings = settings;
             _categories = categories;
-            _baseUrl = baseurl;
         }
 
         public IList<ReleaseInfo> ParseResponse(IndexerResponse indexerResponse)

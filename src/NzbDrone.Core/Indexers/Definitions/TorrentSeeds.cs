@@ -6,17 +6,13 @@ using System.Net;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using AngleSharp.Html.Parser;
-using FluentValidation;
 using NLog;
 using NzbDrone.Common.Http;
-using NzbDrone.Core.Annotations;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
-using NzbDrone.Core.ThingiProvider;
-using NzbDrone.Core.Validation;
 
 namespace NzbDrone.Core.Indexers.Definitions
 {
@@ -24,9 +20,10 @@ namespace NzbDrone.Core.Indexers.Definitions
     {
         public override string Name => "TorrentSeeds";
 
-        public override string BaseUrl => "https://torrentseeds.org/";
-        private string LoginUrl => BaseUrl + "takelogin.php";
-        private string TokenUrl => BaseUrl + "login.php";
+        public override string[] IndexerUrls => new string[] { "https://torrentseeds.org/" };
+        public override string Description => "TorrentSeeds is a Private site for MOVIES / TV / GENERAL";
+        private string LoginUrl => Settings.BaseUrl + "takelogin.php";
+        private string TokenUrl => Settings.BaseUrl + "login.php";
         public override DownloadProtocol Protocol => DownloadProtocol.Torrent;
         public override IndexerPrivacy Privacy => IndexerPrivacy.Private;
         public override IndexerCapabilities Capabilities => SetCapabilities();
@@ -38,12 +35,12 @@ namespace NzbDrone.Core.Indexers.Definitions
 
         public override IIndexerRequestGenerator GetRequestGenerator()
         {
-            return new TorrentSeedsRequestGenerator() { Settings = Settings, Capabilities = Capabilities, BaseUrl = BaseUrl };
+            return new TorrentSeedsRequestGenerator() { Settings = Settings, Capabilities = Capabilities };
         }
 
         public override IParseIndexerResponse GetParser()
         {
-            return new TorrentSeedsParser(Settings, Capabilities.Categories, BaseUrl);
+            return new TorrentSeedsParser(Settings, Capabilities.Categories);
         }
 
         protected override async Task DoLogin()
@@ -186,7 +183,6 @@ namespace NzbDrone.Core.Indexers.Definitions
     {
         public BasicAuthSettings Settings { get; set; }
         public IndexerCapabilities Capabilities { get; set; }
-        public string BaseUrl { get; set; }
 
         public TorrentSeedsRequestGenerator()
         {
@@ -197,7 +193,7 @@ namespace NzbDrone.Core.Indexers.Definitions
             // remove operator characters
             var cleanSearchString = Regex.Replace(term.Trim(), "[ _.+-]+", " ", RegexOptions.Compiled);
 
-            var searchUrl = BaseUrl + "browse_elastic.php";
+            var searchUrl = Settings.BaseUrl + "browse_elastic.php";
             var queryCollection = new NameValueCollection
             {
                 { "search_in", "name" },
@@ -276,13 +272,11 @@ namespace NzbDrone.Core.Indexers.Definitions
     {
         private readonly BasicAuthSettings _settings;
         private readonly IndexerCapabilitiesCategories _categories;
-        private readonly string _baseUrl;
 
-        public TorrentSeedsParser(BasicAuthSettings settings, IndexerCapabilitiesCategories categories, string baseUrl)
+        public TorrentSeedsParser(BasicAuthSettings settings, IndexerCapabilitiesCategories categories)
         {
             _settings = settings;
             _categories = categories;
-            _baseUrl = baseUrl;
         }
 
         public IList<ReleaseInfo> ParseResponse(IndexerResponse indexerResponse)
@@ -305,8 +299,8 @@ namespace NzbDrone.Core.Indexers.Definitions
                 release.Title = qDetailsTitle.TextContent.Trim();
                 var qDlLink = row.QuerySelector("a[href^=\"/download.php?torrent=\"]");
 
-                release.DownloadUrl = _baseUrl + qDlLink.GetAttribute("href").TrimStart('/');
-                release.InfoUrl = _baseUrl + qDetailsLink.GetAttribute("href").TrimStart('/');
+                release.DownloadUrl = _settings.BaseUrl + qDlLink.GetAttribute("href").TrimStart('/');
+                release.InfoUrl = _settings.BaseUrl + qDetailsLink.GetAttribute("href").TrimStart('/');
                 release.Guid = release.InfoUrl;
 
                 var qColumns = row.QuerySelectorAll("td");

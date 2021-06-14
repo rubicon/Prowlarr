@@ -5,19 +5,15 @@ using System.Globalization;
 using System.Linq;
 using System.Threading.Tasks;
 using AngleSharp.Html.Parser;
-using FluentValidation;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
-using NzbDrone.Core.Annotations;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Indexers.Exceptions;
 using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
-using NzbDrone.Core.ThingiProvider;
-using NzbDrone.Core.Validation;
 
 namespace NzbDrone.Core.Indexers.Definitions
 {
@@ -25,8 +21,9 @@ namespace NzbDrone.Core.Indexers.Definitions
     {
         public override string Name => "RevolutionTT";
 
-        public override string BaseUrl => "https://revolutiontt.me/";
-        private string LoginUrl => BaseUrl + "takelogin.php";
+        public override string[] IndexerUrls => new string[] { "https://revolutiontt.me/" };
+        public override string Description => "The Revolution has begun";
+        private string LoginUrl => Settings.BaseUrl + "takelogin.php";
         public override DownloadProtocol Protocol => DownloadProtocol.Torrent;
         public override IndexerPrivacy Privacy => IndexerPrivacy.Private;
         public override IndexerCapabilities Capabilities => SetCapabilities();
@@ -38,12 +35,12 @@ namespace NzbDrone.Core.Indexers.Definitions
 
         public override IIndexerRequestGenerator GetRequestGenerator()
         {
-            return new RevolutionTTRequestGenerator() { Settings = Settings, Capabilities = Capabilities, BaseUrl = BaseUrl };
+            return new RevolutionTTRequestGenerator() { Settings = Settings, Capabilities = Capabilities };
         }
 
         public override IParseIndexerResponse GetParser()
         {
-            return new RevolutionTTParser(Settings, Capabilities.Categories, BaseUrl);
+            return new RevolutionTTParser(Settings, Capabilities.Categories);
         }
 
         protected override async Task DoLogin()
@@ -56,7 +53,7 @@ namespace NzbDrone.Core.Indexers.Definitions
                 AllowAutoRedirect = true
             };
 
-            var loginPage = await _httpClient.ExecuteAsync(new HttpRequest(BaseUrl + "login.php"));
+            var loginPage = await _httpClient.ExecuteAsync(new HttpRequest(Settings.BaseUrl + "login.php"));
 
             requestBuilder.Method = HttpMethod.POST;
             requestBuilder.PostProcess += r => r.RequestTimeout = TimeSpan.FromSeconds(15);
@@ -155,7 +152,6 @@ namespace NzbDrone.Core.Indexers.Definitions
     {
         public BasicAuthSettings Settings { get; set; }
         public IndexerCapabilities Capabilities { get; set; }
-        public string BaseUrl { get; set; }
 
         public RevolutionTTRequestGenerator()
         {
@@ -189,7 +185,7 @@ namespace NzbDrone.Core.Indexers.Definitions
                 }
             }
 
-            var searchUrl = BaseUrl + "browse.php?" + qc.GetQueryString();
+            var searchUrl = Settings.BaseUrl + "browse.php?" + qc.GetQueryString();
 
             var request = new IndexerRequest(searchUrl, HttpAccept.Html);
 
@@ -249,13 +245,11 @@ namespace NzbDrone.Core.Indexers.Definitions
     {
         private readonly BasicAuthSettings _settings;
         private readonly IndexerCapabilitiesCategories _categories;
-        private readonly string _baseUrl;
 
-        public RevolutionTTParser(BasicAuthSettings settings, IndexerCapabilitiesCategories categories, string baseUrl)
+        public RevolutionTTParser(BasicAuthSettings settings, IndexerCapabilitiesCategories categories)
         {
             _settings = settings;
             _categories = categories;
-            _baseUrl = baseUrl;
         }
 
         public IList<ReleaseInfo> ParseResponse(IndexerResponse indexerResponse)
@@ -269,7 +263,7 @@ namespace NzbDrone.Core.Indexers.Definitions
             foreach (var row in rows.Skip(1))
             {
                 var qDetails = row.QuerySelector(".br_right > a");
-                var details = _baseUrl + qDetails.GetAttribute("href");
+                var details = _settings.BaseUrl + qDetails.GetAttribute("href");
                 var title = qDetails.QuerySelector("b").TextContent;
 
                 var qLink = row.QuerySelector("td:nth-child(4) > a");
@@ -278,7 +272,7 @@ namespace NzbDrone.Core.Indexers.Definitions
                     continue; // support/donation banner
                 }
 
-                var link = _baseUrl + qLink.GetAttribute("href");
+                var link = _settings.BaseUrl + qLink.GetAttribute("href");
 
                 // dateString format "yyyy-MMM-dd hh:mm:ss" => eg "2015-04-25 23:38:12"
                 var dateString = row.QuerySelector("td:nth-child(6) nobr").TextContent.Trim();

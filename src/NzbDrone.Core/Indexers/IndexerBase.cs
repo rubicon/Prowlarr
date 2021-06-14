@@ -21,7 +21,7 @@ namespace NzbDrone.Core.Indexers
         protected readonly Logger _logger;
 
         public abstract string Name { get; }
-        public abstract string BaseUrl { get; }
+        public abstract string[] IndexerUrls { get; }
         public abstract string Description { get; }
         public abstract Encoding Encoding { get; }
         public abstract string Language { get; }
@@ -67,6 +67,16 @@ namespace NzbDrone.Core.Indexers
 
         public virtual object RequestAction(string action, IDictionary<string, string> query)
         {
+            if (action == "getUrls")
+            {
+                var links = IndexerUrls;
+
+                return new
+                {
+                    options = links.Select(d => new { Value = d, Name = d })
+                };
+            }
+
             return null;
         }
 

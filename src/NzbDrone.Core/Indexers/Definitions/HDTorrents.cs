@@ -6,17 +6,13 @@ using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using AngleSharp.Html.Parser;
-using FluentValidation;
 using NLog;
 using NzbDrone.Common.Http;
-using NzbDrone.Core.Annotations;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
-using NzbDrone.Core.ThingiProvider;
-using NzbDrone.Core.Validation;
 
 namespace NzbDrone.Core.Indexers.Definitions
 {
@@ -24,8 +20,9 @@ namespace NzbDrone.Core.Indexers.Definitions
     {
         public override string Name => "HD-Torrents";
 
-        public override string BaseUrl => "https://hdts.ru/";
-        private string LoginUrl => BaseUrl + "login.php";
+        public override string[] IndexerUrls => new string[] { "https://hdts.ru/" };
+        public override string Description => "HD-Torrents is a private torrent website with HD torrents and strict rules on their content.";
+        private string LoginUrl => Settings.BaseUrl + "login.php";
         public override DownloadProtocol Protocol => DownloadProtocol.Torrent;
         public override IndexerPrivacy Privacy => IndexerPrivacy.Private;
         public override IndexerCapabilities Capabilities => SetCapabilities();
@@ -37,12 +34,12 @@ namespace NzbDrone.Core.Indexers.Definitions
 
         public override IIndexerRequestGenerator GetRequestGenerator()
         {
-            return new HDTorrentsRequestGenerator() { Settings = Settings, Capabilities = Capabilities, BaseUrl = BaseUrl };
+            return new HDTorrentsRequestGenerator() { Settings = Settings, Capabilities = Capabilities };
         }
 
         public override IParseIndexerResponse GetParser()
         {
-            return new HDTorrentsParser(Settings, Capabilities.Categories, BaseUrl);
+            return new HDTorrentsParser(Settings, Capabilities.Categories);
         }
 
         protected override async Task DoLogin()
@@ -141,7 +138,6 @@ namespace NzbDrone.Core.Indexers.Definitions
     {
         public BasicAuthSettings Settings { get; set; }
         public IndexerCapabilities Capabilities { get; set; }
-        public string BaseUrl { get; set; }
 
         public HDTorrentsRequestGenerator()
         {
@@ -149,7 +145,7 @@ namespace NzbDrone.Core.Indexers.Definitions
 
         private IEnumerable<IndexerRequest> GetPagedRequests(string term, int[] categories, string imdbId = null)
         {
-            var searchUrl = BaseUrl + "torrents.php?" + string.Join(string.Empty, Capabilities.Categories.MapTorznabCapsToTrackers(categories).Select(cat => $"category[]={cat}&"));
+            var searchUrl = Settings.BaseUrl + "torrents.php?" + string.Join(string.Empty, Capabilities.Categories.MapTorznabCapsToTrackers(categories).Select(cat => $"category[]={cat}&"));
 
             var queryCollection = new NameValueCollection
             {
@@ -219,7 +215,6 @@ namespace NzbDrone.Core.Indexers.Definitions
     {
         private readonly BasicAuthSettings _settings;
         private readonly IndexerCapabilitiesCategories _categories;
-        private readonly string _baseUrl;
 
         private readonly Regex _posterRegex = new Regex(@"src=\\'./([^']+)\\'", RegexOptions.IgnoreCase);
         private readonly HashSet<string> _freeleechRanks = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -232,11 +227,10 @@ namespace NzbDrone.Core.Indexers.Definitions
             "Owner"
         };
 
-        public HDTorrentsParser(BasicAuthSettings settings, IndexerCapabilitiesCategories categories, string baseUrl)
+        public HDTorrentsParser(BasicAuthSettings settings, IndexerCapabilitiesCategories categories)
         {
             _settings = settings;
             _categories = categories;
-            _baseUrl = baseUrl;
         }
 
         public IList<ReleaseInfo> ParseResponse(IndexerResponse indexerResponse)
@@ -255,12 +249,12 @@ namespace NzbDrone.Core.Indexers.Definitions
             {
                 var mainLink = row.Children[2].QuerySelector("a");
                 var title = mainLink.TextContent;
-                var details = new Uri(_baseUrl + mainLink.GetAttribute("href"));
+                var details = new Uri(_settings.BaseUrl + mainLink.GetAttribute("href"));
 
                 var posterMatch = _posterRegex.Match(mainLink.GetAttribute("onmouseover"));
-                var poster = posterMatch.Success ? new Uri(_baseUrl + posterMatch.Groups[1].Value.Replace("\\", "/")) : null;
+                var poster = posterMatch.Success ? new Uri(_settings.BaseUrl + posterMatch.Groups[1].Value.Replace("\\", "/")) : null;
 
-                var link = new Uri(_baseUrl + row.Children[4].FirstElementChild.GetAttribute("href"));
+                var link = new Uri(_settings.BaseUrl + row.Children[4].FirstElementChild.GetAttribute("href"));
                 var description = row.Children[2].QuerySelector("span").TextContent;
                 var size = ReleaseInfo.GetBytes(row.Children[7].TextContent);
 

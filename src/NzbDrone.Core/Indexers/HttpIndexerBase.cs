@@ -35,9 +35,6 @@ namespace NzbDrone.Core.Indexers
         public override Encoding Encoding => Encoding.UTF8;
         public override string Language => "en-US";
 
-        //TODO Remove this once we catch up on individual indexers
-        public override string Description => "";
-
         public override bool FollowRedirect => false;
         public override IndexerCapabilities Capabilities { get; protected set; }
         public virtual int PageSize => 0;

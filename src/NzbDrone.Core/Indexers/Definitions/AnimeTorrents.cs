@@ -6,18 +6,14 @@ using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using AngleSharp.Html.Parser;
-using FluentValidation;
 using NLog;
 using NzbDrone.Common.Http;
-using NzbDrone.Core.Annotations;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Indexers.Exceptions;
 using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
-using NzbDrone.Core.ThingiProvider;
-using NzbDrone.Core.Validation;
 
 namespace NzbDrone.Core.Indexers.Definitions
 {
@@ -25,8 +21,9 @@ namespace NzbDrone.Core.Indexers.Definitions
     {
         public override string Name => "AnimeTorrents";
 
-        public override string BaseUrl => "https://animetorrents.me/";
-        private string LoginUrl => BaseUrl + "login.php";
+        public override string[] IndexerUrls => new string[] { "https://animetorrents.me/" };
+        public override string Description => "Definitive source for anime and manga";
+        private string LoginUrl => Settings.BaseUrl + "login.php";
         public override DownloadProtocol Protocol => DownloadProtocol.Torrent;
         public override IndexerPrivacy Privacy => IndexerPrivacy.Private;
         public override IndexerCapabilities Capabilities => SetCapabilities();
@@ -38,12 +35,12 @@ namespace NzbDrone.Core.Indexers.Definitions
 
         public override IIndexerRequestGenerator GetRequestGenerator()
         {
-            return new AnimeTorrentsRequestGenerator() { Settings = Settings, Capabilities = Capabilities, BaseUrl = BaseUrl };
+            return new AnimeTorrentsRequestGenerator() { Settings = Settings, Capabilities = Capabilities };
         }
 
         public override IParseIndexerResponse GetParser()
         {
-            return new AnimeTorrentsParser(Settings, Capabilities.Categories, BaseUrl);
+            return new AnimeTorrentsParser(Settings, Capabilities.Categories);
         }
 
         protected override async Task DoLogin()
@@ -135,7 +132,6 @@ namespace NzbDrone.Core.Indexers.Definitions
     {
         public BasicAuthSettings Settings { get; set; }
         public IndexerCapabilities Capabilities { get; set; }
-        public string BaseUrl { get; set; }
 
         public AnimeTorrentsRequestGenerator()
         {
@@ -148,8 +144,8 @@ namespace NzbDrone.Core.Indexers.Definitions
             //  replace any space, special char, etc. with % (wildcard)
             var replaceRegex = new Regex("[^a-zA-Z0-9]+");
             searchString = replaceRegex.Replace(searchString, "%");
-            var searchUrl = BaseUrl + "ajax/torrents_data.php";
-            var searchUrlReferer = BaseUrl + "torrents.php?cat=0&searchin=filename&search=";
+            var searchUrl = Settings.BaseUrl + "ajax/torrents_data.php";
+            var searchUrlReferer = Settings.BaseUrl + "torrents.php?cat=0&searchin=filename&search=";
 
             var trackerCats = Capabilities.Categories.MapTorznabCapsToTrackers(categories) ?? new List<string>();
 
@@ -229,13 +225,11 @@ namespace NzbDrone.Core.Indexers.Definitions
     {
         private readonly BasicAuthSettings _settings;
         private readonly IndexerCapabilitiesCategories _categories;
-        private readonly string _baseUrl;
 
-        public AnimeTorrentsParser(BasicAuthSettings settings, IndexerCapabilitiesCategories categories, string baseUrl)
+        public AnimeTorrentsParser(BasicAuthSettings settings, IndexerCapabilitiesCategories categories)
         {
             _settings = settings;
             _categories = categories;
-            _baseUrl = baseUrl;
         }
 
         public IList<ReleaseInfo> ParseResponse(IndexerResponse indexerResponse)

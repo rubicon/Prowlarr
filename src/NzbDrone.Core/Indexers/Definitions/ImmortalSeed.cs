@@ -21,8 +21,9 @@ namespace NzbDrone.Core.Indexers.Definitions
     {
         public override string Name => "ImmortalSeed";
 
-        public override string BaseUrl => "https://immortalseed.me/";
-        private string LoginUrl => BaseUrl + "takelogin.php";
+        public override string[] IndexerUrls => new string[] { "https://immortalseed.me/" };
+        public override string Description => "ImmortalSeed (iS) is a Private Torrent Tracker for MOVIES / TV / GENERAL";
+        private string LoginUrl => Settings.BaseUrl + "takelogin.php";
         public override DownloadProtocol Protocol => DownloadProtocol.Torrent;
         public override IndexerPrivacy Privacy => IndexerPrivacy.Private;
         public override IndexerCapabilities Capabilities => SetCapabilities();
@@ -34,12 +35,12 @@ namespace NzbDrone.Core.Indexers.Definitions
 
         public override IIndexerRequestGenerator GetRequestGenerator()
         {
-            return new ImmortalSeedRequestGenerator() { Settings = Settings, Capabilities = Capabilities, BaseUrl = BaseUrl };
+            return new ImmortalSeedRequestGenerator() { Settings = Settings, Capabilities = Capabilities };
         }
 
         public override IParseIndexerResponse GetParser()
         {
-            return new ImmortalSeedParser(Settings, Capabilities.Categories, BaseUrl);
+            return new ImmortalSeedParser(Settings, Capabilities.Categories);
         }
 
         protected override async Task DoLogin()
@@ -157,7 +158,6 @@ namespace NzbDrone.Core.Indexers.Definitions
     {
         public BasicAuthSettings Settings { get; set; }
         public IndexerCapabilities Capabilities { get; set; }
-        public string BaseUrl { get; set; }
 
         public ImmortalSeedRequestGenerator()
         {
@@ -165,7 +165,7 @@ namespace NzbDrone.Core.Indexers.Definitions
 
         private IEnumerable<IndexerRequest> GetPagedRequests(string term, int[] categories, string imdbId = null)
         {
-            var searchUrl = BaseUrl + "browse.php";
+            var searchUrl = Settings.BaseUrl + "browse.php";
 
             //TODO - Actually map some categories here
             if (term.IsNotNullOrWhiteSpace())
@@ -231,13 +231,11 @@ namespace NzbDrone.Core.Indexers.Definitions
     {
         private readonly BasicAuthSettings _settings;
         private readonly IndexerCapabilitiesCategories _categories;
-        private readonly string _baseUrl;
 
-        public ImmortalSeedParser(BasicAuthSettings settings, IndexerCapabilitiesCategories categories, string baseUrl)
+        public ImmortalSeedParser(BasicAuthSettings settings, IndexerCapabilitiesCategories categories)
         {
             _settings = settings;
             _categories = categories;
-            _baseUrl = baseUrl;
         }
 
         public IList<ReleaseInfo> ParseResponse(IndexerResponse indexerResponse)

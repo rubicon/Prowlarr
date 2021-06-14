@@ -13,13 +13,11 @@ namespace NzbDrone.Core.Indexers.Gazelle
     {
         private readonly GazelleSettings _settings;
         private readonly IndexerCapabilities _capabilities;
-        private readonly string _baseUrl;
 
-        public GazelleParser(GazelleSettings settings, IndexerCapabilities capabilities, string baseUrl)
+        public GazelleParser(GazelleSettings settings, IndexerCapabilities capabilities)
         {
             _settings = settings;
             _capabilities = capabilities;
-            _baseUrl = baseUrl;
         }
 
         public Action<IDictionary<string, string>, DateTime?> CookiesUpdater { get; set; }
@@ -140,7 +138,7 @@ namespace NzbDrone.Core.Indexers.Gazelle
 
         private string GetDownloadUrl(int torrentId)
         {
-            var url = new HttpUri(_baseUrl)
+            var url = new HttpUri(_settings.BaseUrl)
                 .CombinePath("/torrents.php")
                 .AddQueryParam("action", "download")
                 .AddQueryParam("id", torrentId);
@@ -150,7 +148,7 @@ namespace NzbDrone.Core.Indexers.Gazelle
 
         private string GetInfoUrl(string groupId, int torrentId)
         {
-            var url = new HttpUri(_baseUrl)
+            var url = new HttpUri(_settings.BaseUrl)
                 .CombinePath("/torrents.php")
                 .AddQueryParam("id", groupId)
                 .AddQueryParam("torrentid", torrentId);
