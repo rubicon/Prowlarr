@@ -21,7 +21,7 @@ using NzbDrone.Core.Validation;
 
 namespace NzbDrone.Core.Indexers.Definitions
 {
-    public class AnimeTorrents : TorrentIndexerBase<AnimeTorrentsSettings>
+    public class AnimeTorrents : TorrentIndexerBase<BasicAuthSettings>
     {
         public override string Name => "AnimeTorrents";
 
@@ -133,7 +133,7 @@ namespace NzbDrone.Core.Indexers.Definitions
 
     public class AnimeTorrentsRequestGenerator : IIndexerRequestGenerator
     {
-        public AnimeTorrentsSettings Settings { get; set; }
+        public BasicAuthSettings Settings { get; set; }
         public IndexerCapabilities Capabilities { get; set; }
         public string BaseUrl { get; set; }
 
@@ -227,11 +227,11 @@ namespace NzbDrone.Core.Indexers.Definitions
 
     public class AnimeTorrentsParser : IParseIndexerResponse
     {
-        private readonly AnimeTorrentsSettings _settings;
+        private readonly BasicAuthSettings _settings;
         private readonly IndexerCapabilitiesCategories _categories;
         private readonly string _baseUrl;
 
-        public AnimeTorrentsParser(AnimeTorrentsSettings settings, IndexerCapabilitiesCategories categories, string baseUrl)
+        public AnimeTorrentsParser(BasicAuthSettings settings, IndexerCapabilitiesCategories categories, string baseUrl)
         {
             _settings = settings;
             _categories = categories;
@@ -329,36 +329,5 @@ namespace NzbDrone.Core.Indexers.Definitions
         }
 
         public Action<IDictionary<string, string>, DateTime?> CookiesUpdater { get; set; }
-    }
-
-    public class AnimeTorrentsSettingsValidator : AbstractValidator<AnimeTorrentsSettings>
-    {
-        public AnimeTorrentsSettingsValidator()
-        {
-            RuleFor(c => c.Username).NotEmpty();
-            RuleFor(c => c.Password).NotEmpty();
-        }
-    }
-
-    public class AnimeTorrentsSettings : IProviderConfig
-    {
-        private static readonly AnimeTorrentsSettingsValidator Validator = new AnimeTorrentsSettingsValidator();
-
-        public AnimeTorrentsSettings()
-        {
-            Username = "";
-            Password = "";
-        }
-
-        [FieldDefinition(1, Label = "Username", HelpText = "Site Username")]
-        public string Username { get; set; }
-
-        [FieldDefinition(2, Label = "Password", Type = FieldType.Password, HelpText = "Site Password", Privacy = PrivacyLevel.Password)]
-        public string Password { get; set; }
-
-        public NzbDroneValidationResult Validate()
-        {
-            return new NzbDroneValidationResult(Validator.Validate(this));
-        }
     }
 }

@@ -25,7 +25,7 @@ using NzbDrone.Core.Validation;
 
 namespace NzbDrone.Core.Indexers.Definitions
 {
-    public class ZonaQ : TorrentIndexerBase<ZonaQSettings>
+    public class ZonaQ : TorrentIndexerBase<BasicAuthSettings>
     {
         public override string Name => "ZonaQ";
         public override string BaseUrl => "https://www.zonaq.pw/";
@@ -232,7 +232,7 @@ namespace NzbDrone.Core.Indexers.Definitions
 
     public class ZonaQRequestGenerator : IIndexerRequestGenerator
     {
-        public ZonaQSettings Settings { get; set; }
+        public BasicAuthSettings Settings { get; set; }
         public IndexerCapabilities Capabilities { get; set; }
         public string BaseUrl { get; set; }
 
@@ -315,11 +315,11 @@ namespace NzbDrone.Core.Indexers.Definitions
 
     public class ZonaQParser : IParseIndexerResponse
     {
-        private readonly ZonaQSettings _settings;
+        private readonly BasicAuthSettings _settings;
         private readonly IndexerCapabilitiesCategories _categories;
         private readonly string _baseUrl;
 
-        public ZonaQParser(ZonaQSettings settings, IndexerCapabilitiesCategories categories, string baseurl)
+        public ZonaQParser(BasicAuthSettings settings, IndexerCapabilitiesCategories categories, string baseurl)
         {
             _settings = settings;
             _categories = categories;
@@ -396,36 +396,5 @@ namespace NzbDrone.Core.Indexers.Definitions
         }
 
         public Action<IDictionary<string, string>, DateTime?> CookiesUpdater { get; set; }
-    }
-
-    public class ZonaQSettingsValidator : AbstractValidator<ZonaQSettings>
-    {
-        public ZonaQSettingsValidator()
-        {
-            RuleFor(c => c.Username).NotEmpty();
-            RuleFor(c => c.Password).NotEmpty();
-        }
-    }
-
-    public class ZonaQSettings : IProviderConfig
-    {
-        private static readonly ZonaQSettingsValidator Validator = new ZonaQSettingsValidator();
-
-        public ZonaQSettings()
-        {
-            Username = "";
-            Password = "";
-        }
-
-        [FieldDefinition(1, Label = "Username", HelpText = "Site Username")]
-        public string Username { get; set; }
-
-        [FieldDefinition(1, Label = "Password", Privacy = PrivacyLevel.Password, Type = FieldType.Password, HelpText = "Site Password")]
-        public string Password { get; set; }
-
-        public NzbDroneValidationResult Validate()
-        {
-            return new NzbDroneValidationResult(Validator.Validate(this));
-        }
     }
 }

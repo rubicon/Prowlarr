@@ -5,23 +5,19 @@ using System.Linq;
 using System.Net;
 using System.Threading.Tasks;
 using AngleSharp.Html.Parser;
-using FluentValidation;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
-using NzbDrone.Core.Annotations;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Indexers.Exceptions;
 using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
-using NzbDrone.Core.ThingiProvider;
-using NzbDrone.Core.Validation;
 
 namespace NzbDrone.Core.Indexers.Definitions
 {
-    public class ImmortalSeed : TorrentIndexerBase<ImmortalSeedSettings>
+    public class ImmortalSeed : TorrentIndexerBase<BasicAuthSettings>
     {
         public override string Name => "ImmortalSeed";
 
@@ -159,7 +155,7 @@ namespace NzbDrone.Core.Indexers.Definitions
 
     public class ImmortalSeedRequestGenerator : IIndexerRequestGenerator
     {
-        public ImmortalSeedSettings Settings { get; set; }
+        public BasicAuthSettings Settings { get; set; }
         public IndexerCapabilities Capabilities { get; set; }
         public string BaseUrl { get; set; }
 
@@ -233,11 +229,11 @@ namespace NzbDrone.Core.Indexers.Definitions
 
     public class ImmortalSeedParser : IParseIndexerResponse
     {
-        private readonly ImmortalSeedSettings _settings;
+        private readonly BasicAuthSettings _settings;
         private readonly IndexerCapabilitiesCategories _categories;
         private readonly string _baseUrl;
 
-        public ImmortalSeedParser(ImmortalSeedSettings settings, IndexerCapabilitiesCategories categories, string baseUrl)
+        public ImmortalSeedParser(BasicAuthSettings settings, IndexerCapabilitiesCategories categories, string baseUrl)
         {
             _settings = settings;
             _categories = categories;
@@ -324,36 +320,5 @@ namespace NzbDrone.Core.Indexers.Definitions
         }
 
         public Action<IDictionary<string, string>, DateTime?> CookiesUpdater { get; set; }
-    }
-
-    public class ImmortalSeedSettingsValidator : AbstractValidator<ImmortalSeedSettings>
-    {
-        public ImmortalSeedSettingsValidator()
-        {
-            RuleFor(c => c.Username).NotEmpty();
-            RuleFor(c => c.Password).NotEmpty();
-        }
-    }
-
-    public class ImmortalSeedSettings : IProviderConfig
-    {
-        private static readonly ImmortalSeedSettingsValidator Validator = new ImmortalSeedSettingsValidator();
-
-        public ImmortalSeedSettings()
-        {
-            Username = "";
-            Password = "";
-        }
-
-        [FieldDefinition(1, Label = "Username", HelpText = "Site Username")]
-        public string Username { get; set; }
-
-        [FieldDefinition(2, Label = "Password", Type = FieldType.Password, HelpText = "Site Password", Privacy = PrivacyLevel.Password)]
-        public string Password { get; set; }
-
-        public NzbDroneValidationResult Validate()
-        {
-            return new NzbDroneValidationResult(Validator.Validate(this));
-        }
     }
 }

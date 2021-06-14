@@ -20,7 +20,7 @@ using NzbDrone.Core.Validation;
 
 namespace NzbDrone.Core.Indexers.Definitions
 {
-    public class HDTorrents : TorrentIndexerBase<HDTorrentsSettings>
+    public class HDTorrents : TorrentIndexerBase<BasicAuthSettings>
     {
         public override string Name => "HD-Torrents";
 
@@ -139,7 +139,7 @@ namespace NzbDrone.Core.Indexers.Definitions
 
     public class HDTorrentsRequestGenerator : IIndexerRequestGenerator
     {
-        public HDTorrentsSettings Settings { get; set; }
+        public BasicAuthSettings Settings { get; set; }
         public IndexerCapabilities Capabilities { get; set; }
         public string BaseUrl { get; set; }
 
@@ -217,7 +217,7 @@ namespace NzbDrone.Core.Indexers.Definitions
 
     public class HDTorrentsParser : IParseIndexerResponse
     {
-        private readonly HDTorrentsSettings _settings;
+        private readonly BasicAuthSettings _settings;
         private readonly IndexerCapabilitiesCategories _categories;
         private readonly string _baseUrl;
 
@@ -232,7 +232,7 @@ namespace NzbDrone.Core.Indexers.Definitions
             "Owner"
         };
 
-        public HDTorrentsParser(HDTorrentsSettings settings, IndexerCapabilitiesCategories categories, string baseUrl)
+        public HDTorrentsParser(BasicAuthSettings settings, IndexerCapabilitiesCategories categories, string baseUrl)
         {
             _settings = settings;
             _categories = categories;
@@ -354,36 +354,5 @@ namespace NzbDrone.Core.Indexers.Definitions
         }
 
         public Action<IDictionary<string, string>, DateTime?> CookiesUpdater { get; set; }
-    }
-
-    public class HDTorrentsSettingsValidator : AbstractValidator<HDTorrentsSettings>
-    {
-        public HDTorrentsSettingsValidator()
-        {
-            RuleFor(c => c.Username).NotEmpty();
-            RuleFor(c => c.Password).NotEmpty();
-        }
-    }
-
-    public class HDTorrentsSettings : IProviderConfig
-    {
-        private static readonly HDTorrentsSettingsValidator Validator = new HDTorrentsSettingsValidator();
-
-        public HDTorrentsSettings()
-        {
-            Username = "";
-            Password = "";
-        }
-
-        [FieldDefinition(1, Label = "Username", HelpText = "Site Username")]
-        public string Username { get; set; }
-
-        [FieldDefinition(2, Label = "Password", Type = FieldType.Password, HelpText = "Site Password", Privacy = PrivacyLevel.Password)]
-        public string Password { get; set; }
-
-        public NzbDroneValidationResult Validate()
-        {
-            return new NzbDroneValidationResult(Validator.Validate(this));
-        }
     }
 }

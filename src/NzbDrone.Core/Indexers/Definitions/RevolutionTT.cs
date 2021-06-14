@@ -21,7 +21,7 @@ using NzbDrone.Core.Validation;
 
 namespace NzbDrone.Core.Indexers.Definitions
 {
-    public class RevolutionTT : TorrentIndexerBase<RevolutionTTSettings>
+    public class RevolutionTT : TorrentIndexerBase<BasicAuthSettings>
     {
         public override string Name => "RevolutionTT";
 
@@ -153,7 +153,7 @@ namespace NzbDrone.Core.Indexers.Definitions
 
     public class RevolutionTTRequestGenerator : IIndexerRequestGenerator
     {
-        public RevolutionTTSettings Settings { get; set; }
+        public BasicAuthSettings Settings { get; set; }
         public IndexerCapabilities Capabilities { get; set; }
         public string BaseUrl { get; set; }
 
@@ -247,11 +247,11 @@ namespace NzbDrone.Core.Indexers.Definitions
 
     public class RevolutionTTParser : IParseIndexerResponse
     {
-        private readonly RevolutionTTSettings _settings;
+        private readonly BasicAuthSettings _settings;
         private readonly IndexerCapabilitiesCategories _categories;
         private readonly string _baseUrl;
 
-        public RevolutionTTParser(RevolutionTTSettings settings, IndexerCapabilitiesCategories categories, string baseUrl)
+        public RevolutionTTParser(BasicAuthSettings settings, IndexerCapabilitiesCategories categories, string baseUrl)
         {
             _settings = settings;
             _categories = categories;
@@ -322,36 +322,5 @@ namespace NzbDrone.Core.Indexers.Definitions
         }
 
         public Action<IDictionary<string, string>, DateTime?> CookiesUpdater { get; set; }
-    }
-
-    public class RevolutionTTSettingsValidator : AbstractValidator<RevolutionTTSettings>
-    {
-        public RevolutionTTSettingsValidator()
-        {
-            RuleFor(c => c.Username).NotEmpty();
-            RuleFor(c => c.Password).NotEmpty();
-        }
-    }
-
-    public class RevolutionTTSettings : IProviderConfig
-    {
-        private static readonly RevolutionTTSettingsValidator Validator = new RevolutionTTSettingsValidator();
-
-        public RevolutionTTSettings()
-        {
-            Username = "";
-            Password = "";
-        }
-
-        [FieldDefinition(1, Label = "Username", HelpText = "Site Username")]
-        public string Username { get; set; }
-
-        [FieldDefinition(2, Label = "Password", Type = FieldType.Password, HelpText = "Site Password", Privacy = PrivacyLevel.Password)]
-        public string Password { get; set; }
-
-        public NzbDroneValidationResult Validate()
-        {
-            return new NzbDroneValidationResult(Validator.Validate(this));
-        }
     }
 }

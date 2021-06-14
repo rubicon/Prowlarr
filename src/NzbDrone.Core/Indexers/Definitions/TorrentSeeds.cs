@@ -20,7 +20,7 @@ using NzbDrone.Core.Validation;
 
 namespace NzbDrone.Core.Indexers.Definitions
 {
-    public class TorrentSeeds : TorrentIndexerBase<TorrentSeedsSettings>
+    public class TorrentSeeds : TorrentIndexerBase<BasicAuthSettings>
     {
         public override string Name => "TorrentSeeds";
 
@@ -184,7 +184,7 @@ namespace NzbDrone.Core.Indexers.Definitions
 
     public class TorrentSeedsRequestGenerator : IIndexerRequestGenerator
     {
-        public TorrentSeedsSettings Settings { get; set; }
+        public BasicAuthSettings Settings { get; set; }
         public IndexerCapabilities Capabilities { get; set; }
         public string BaseUrl { get; set; }
 
@@ -274,11 +274,11 @@ namespace NzbDrone.Core.Indexers.Definitions
 
     public class TorrentSeedsParser : IParseIndexerResponse
     {
-        private readonly TorrentSeedsSettings _settings;
+        private readonly BasicAuthSettings _settings;
         private readonly IndexerCapabilitiesCategories _categories;
         private readonly string _baseUrl;
 
-        public TorrentSeedsParser(TorrentSeedsSettings settings, IndexerCapabilitiesCategories categories, string baseUrl)
+        public TorrentSeedsParser(BasicAuthSettings settings, IndexerCapabilitiesCategories categories, string baseUrl)
         {
             _settings = settings;
             _categories = categories;
@@ -333,36 +333,5 @@ namespace NzbDrone.Core.Indexers.Definitions
         }
 
         public Action<IDictionary<string, string>, DateTime?> CookiesUpdater { get; set; }
-    }
-
-    public class TorrentSeedsSettingsValidator : AbstractValidator<TorrentSeedsSettings>
-    {
-        public TorrentSeedsSettingsValidator()
-        {
-            RuleFor(c => c.Username).NotEmpty();
-            RuleFor(c => c.Password).NotEmpty();
-        }
-    }
-
-    public class TorrentSeedsSettings : IProviderConfig
-    {
-        private static readonly TorrentSeedsSettingsValidator Validator = new TorrentSeedsSettingsValidator();
-
-        public TorrentSeedsSettings()
-        {
-            Username = "";
-            Password = "";
-        }
-
-        [FieldDefinition(1, Label = "Username", HelpText = "Site Username")]
-        public string Username { get; set; }
-
-        [FieldDefinition(2, Label = "Password", Type = FieldType.Password, HelpText = "Site Password", Privacy = PrivacyLevel.Password)]
-        public string Password { get; set; }
-
-        public NzbDroneValidationResult Validate()
-        {
-            return new NzbDroneValidationResult(Validator.Validate(this));
-        }
     }
 }
