@@ -7,7 +7,7 @@ using NzbDrone.Core.Messaging.Events;
 
 namespace NzbDrone.Core.Profiles
 {
-    public interface IProfileService
+    public interface IAppProfileService
     {
         AppSyncProfile Add(AppSyncProfile profile);
         void Update(AppSyncProfile profile);
@@ -18,7 +18,7 @@ namespace NzbDrone.Core.Profiles
         AppSyncProfile GetDefaultProfile(string name);
     }
 
-    public class AppSyncProfileService : IProfileService,
+    public class AppSyncProfileService : IAppProfileService,
         IHandle<ApplicationStartedEvent>
     {
         private readonly IAppProfileRepository _profileRepository;
@@ -46,7 +46,7 @@ namespace NzbDrone.Core.Profiles
 
         public void Delete(int id)
         {
-            if (_indexerFactory.All().Any(c => c.AppProfileId == id))
+            if (_indexerFactory.All().Any(c => c.AppProfileId == id) || All().Count == 1)
             {
                 throw new ProfileInUseException(id);
             }
@@ -86,9 +86,10 @@ namespace NzbDrone.Core.Profiles
             var qualityProfile = new AppSyncProfile
             {
                 Name = name,
+                EnableRss = true,
                 EnableAutomaticSearch = true,
                 EnableInteractiveSearch = true,
-                EnableRss = true
+                MinimumSeeders = 1
             };
 
             return qualityProfile;

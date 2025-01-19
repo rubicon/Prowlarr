@@ -11,7 +11,7 @@
   flex: 0 0 90px;
 }
 
-.title {
+.sortTitle {
   composes: cell;
 
   flex: 4 0 110px;
@@ -21,7 +21,7 @@
 .category {
   composes: cell;
 
-  flex: 0 0 110px;
+  flex: 0 0 130px;
 }
 
 .age,
@@ -58,11 +58,42 @@
 
   margin: 0 2px;
   width: 22px;
-  color: $textColor;
+  color: var(--textColor);
+  text-align: center;
 }
 
 .externalLinks {
+  composes: button from '~Components/Link/IconButton.css';
+
+  color: var(--textColor);
+}
+
+.manualDownloadContent {
+  position: relative;
+  display: inline-block;
   margin: 0 2px;
   width: 22px;
+  height: 20.39px;
+  vertical-align: middle;
+  line-height: 20.39px;
+
+  &:hover {
+    color: var(--iconButtonHoverColor);
+  }
+}
+
+.interactiveIcon {
+  position: absolute;
+  top: 4px;
+  left: 0;
+  /* width: 100%; */
+  text-align: center;
+}
+
+.downloadIcon {
+  position: absolute;
+  top: 7px;
+  left: 8px;
+  /* width: 100%; */
   text-align: center;
 }

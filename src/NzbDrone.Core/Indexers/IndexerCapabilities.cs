@@ -13,7 +13,12 @@ namespace NzbDrone.Core.Indexers
         ImdbId,
         TvdbId,
         RId,
-        TvMazeId
+        TvMazeId,
+        TraktId,
+        TmdbId,
+        DoubanId,
+        Genre,
+        Year
     }
 
     public enum MovieSearchParam
@@ -24,6 +29,9 @@ namespace NzbDrone.Core.Indexers
         ImdbTitle,
         ImdbYear,
         TraktId,
+        Genre,
+        DoubanId,
+        Year
     }
 
     public enum MusicSearchParam
@@ -32,7 +40,9 @@ namespace NzbDrone.Core.Indexers
         Album,
         Artist,
         Label,
-        Year
+        Year,
+        Genre,
+        Track
     }
 
     public enum SearchParam
@@ -44,7 +54,10 @@ namespace NzbDrone.Core.Indexers
     {
         Q,
         Title,
-        Author
+        Author,
+        Publisher,
+        Genre,
+        Year
     }
 
     public class IndexerCapabilities
@@ -65,24 +78,37 @@ namespace NzbDrone.Core.Indexers
         public bool TvSearchTvdbAvailable => TvSearchParams.Contains(TvSearchParam.TvdbId);
         public bool TvSearchTvRageAvailable => TvSearchParams.Contains(TvSearchParam.RId);
         public bool TvSearchTvMazeAvailable => TvSearchParams.Contains(TvSearchParam.TvMazeId);
+        public bool TvSearchTraktAvailable => TvSearchParams.Contains(TvSearchParam.TraktId);
+        public bool TvSearchTmdbAvailable => TvSearchParams.Contains(TvSearchParam.TmdbId);
+        public bool TvSearchDoubanAvailable => TvSearchParams.Contains(TvSearchParam.DoubanId);
+        public bool TvSearchGenreAvailable => TvSearchParams.Contains(TvSearchParam.Genre);
+        public bool TvSearchYearAvailable => TvSearchParams.Contains(TvSearchParam.Year);
 
         public List<MovieSearchParam> MovieSearchParams;
         public bool MovieSearchAvailable => MovieSearchParams.Count > 0;
         public bool MovieSearchImdbAvailable => MovieSearchParams.Contains(MovieSearchParam.ImdbId);
         public bool MovieSearchTmdbAvailable => MovieSearchParams.Contains(MovieSearchParam.TmdbId);
         public bool MovieSearchTraktAvailable => MovieSearchParams.Contains(MovieSearchParam.TraktId);
+        public bool MovieSearchDoubanAvailable => MovieSearchParams.Contains(MovieSearchParam.DoubanId);
+        public bool MovieSearchGenreAvailable => MovieSearchParams.Contains(MovieSearchParam.Genre);
+        public bool MovieSearchYearAvailable => MovieSearchParams.Contains(MovieSearchParam.Year);
 
         public List<MusicSearchParam> MusicSearchParams;
         public bool MusicSearchAvailable => MusicSearchParams.Count > 0;
         public bool MusicSearchAlbumAvailable => MusicSearchParams.Contains(MusicSearchParam.Album);
         public bool MusicSearchArtistAvailable => MusicSearchParams.Contains(MusicSearchParam.Artist);
         public bool MusicSearchLabelAvailable => MusicSearchParams.Contains(MusicSearchParam.Label);
+        public bool MusicSearchTrackAvailable => MusicSearchParams.Contains(MusicSearchParam.Track);
+        public bool MusicSearchGenreAvailable => MusicSearchParams.Contains(MusicSearchParam.Genre);
         public bool MusicSearchYearAvailable => MusicSearchParams.Contains(MusicSearchParam.Year);
 
         public List<BookSearchParam> BookSearchParams;
         public bool BookSearchAvailable => BookSearchParams.Count > 0;
         public bool BookSearchTitleAvailable => BookSearchParams.Contains(BookSearchParam.Title);
         public bool BookSearchAuthorAvailable => BookSearchParams.Contains(BookSearchParam.Author);
+        public bool BookSearchPublisherAvailable => BookSearchParams.Contains(BookSearchParam.Publisher);
+        public bool BookSearchGenreAvailable => BookSearchParams.Contains(BookSearchParam.Genre);
+        public bool BookSearchYearAvailable => BookSearchParams.Contains(BookSearchParam.Year);
 
         public readonly IndexerCapabilitiesCategories Categories;
         public List<IndexerFlag> Flags;
@@ -284,6 +310,31 @@ namespace NzbDrone.Core.Indexers
                 parameters.Add("tvmazeid");
             }
 
+            if (TvSearchTraktAvailable)
+            {
+                parameters.Add("traktid");
+            }
+
+            if (TvSearchTmdbAvailable)
+            {
+                parameters.Add("tmdbid");
+            }
+
+            if (TvSearchDoubanAvailable)
+            {
+                parameters.Add("doubanid");
+            }
+
+            if (TvSearchGenreAvailable)
+            {
+                parameters.Add("genre");
+            }
+
+            if (TvSearchYearAvailable)
+            {
+                parameters.Add("year");
+            }
+
             return string.Join(",", parameters);
         }
 
@@ -307,6 +358,26 @@ namespace NzbDrone.Core.Indexers
                 parameters.Add("tmdbid");
             }
 
+            if (MovieSearchTraktAvailable)
+            {
+                parameters.Add("traktid");
+            }
+
+            if (MovieSearchGenreAvailable)
+            {
+                parameters.Add("genre");
+            }
+
+            if (MovieSearchDoubanAvailable)
+            {
+                parameters.Add("doubanid");
+            }
+
+            if (MovieSearchYearAvailable)
+            {
+                parameters.Add("year");
+            }
+
             return string.Join(",", parameters);
         }
 
@@ -328,9 +399,19 @@ namespace NzbDrone.Core.Indexers
                 parameters.Add("label");
             }
 
+            if (MusicSearchTrackAvailable)
+            {
+                parameters.Add("track");
+            }
+
             if (MusicSearchYearAvailable)
             {
                 parameters.Add("year");
+            }
+
+            if (MusicSearchGenreAvailable)
+            {
+                parameters.Add("genre");
             }
 
             return string.Join(",", parameters);
@@ -349,6 +430,21 @@ namespace NzbDrone.Core.Indexers
                 parameters.Add("author");
             }
 
+            if (BookSearchPublisherAvailable)
+            {
+                parameters.Add("publisher");
+            }
+
+            if (BookSearchGenreAvailable)
+            {
+                parameters.Add("genre");
+            }
+
+            if (BookSearchYearAvailable)
+            {
+                parameters.Add("year");
+            }
+
             return string.Join(",", parameters);
         }
 
@@ -359,10 +455,10 @@ namespace NzbDrone.Core.Indexers
                 new XElement("caps",
                     new XElement("server",
                         new XAttribute("title", "Prowlarr")),
-                    LimitsMax != null || LimitsDefault != null ?
+                    LimitsDefault != null || LimitsMax != null ?
                         new XElement("limits",
-                            LimitsMax != null ? new XAttribute("max", LimitsMax) : null,
-                            LimitsDefault != null ? new XAttribute("default", LimitsDefault) : null)
+                            LimitsDefault != null ? new XAttribute("default", LimitsDefault) : null,
+                            LimitsMax != null ? new XAttribute("max", LimitsMax) : null)
                     : null,
                     new XElement("searching",
                         new XElement("search",

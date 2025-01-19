@@ -54,6 +54,12 @@ namespace NzbDrone.Core.Indexers.Headphones
 
         protected override bool PreProcess(IndexerResponse indexerResponse)
         {
+            if (indexerResponse.HttpResponse.HasHttpError &&
+                (indexerResponse.HttpResponse.Headers.ContentType == null || !indexerResponse.HttpResponse.Headers.ContentType.Contains("xml")))
+            {
+                base.PreProcess(indexerResponse);
+            }
+
             var xdoc = LoadXmlDocument(indexerResponse);
 
             CheckError(xdoc, indexerResponse);
@@ -64,16 +70,17 @@ namespace NzbDrone.Core.Indexers.Headphones
         protected override bool PostProcess(IndexerResponse indexerResponse, List<XElement> items, List<ReleaseInfo> releases)
         {
             var enclosureTypes = items.SelectMany(GetEnclosures).Select(v => v.Type).Distinct().ToArray();
+
             if (enclosureTypes.Any() && enclosureTypes.Intersect(PreferredEnclosureMimeTypes).Empty())
             {
                 if (enclosureTypes.Intersect(TorrentEnclosureMimeTypes).Any())
                 {
-                    _logger.Warn("Feed does not contain {0}, found {1}, did you intend to add a Torznab indexer?", NzbEnclosureMimeType, enclosureTypes[0]);
+                    _logger.Warn("{0} does not contain {1}, found {2}, did you intend to add a Torznab indexer?", indexerResponse.Request.Url, NzbEnclosureMimeType, enclosureTypes[0]);
+
+                    return false;
                 }
-                else
-                {
-                    _logger.Warn("Feed does not contain {0}, found {1}.", NzbEnclosureMimeType, enclosureTypes[0]);
-                }
+
+                _logger.Warn("{0} does not contain {1}, found {2}.", indexerResponse.Request.Url, NzbEnclosureMimeType, enclosureTypes[0]);
             }
 
             return true;
@@ -120,12 +127,32 @@ namespace NzbDrone.Core.Indexers.Headphones
             return results;
         }
 
+        protected override List<string> GetLanguages(XElement item)
+        {
+            var languages = TryGetMultipleNewznabAttributes(item, "language");
+            var results = new List<string>();
+
+            // Try to find <language> elements for some indexers that suck at following the rules.
+            if (languages.Count == 0)
+            {
+                languages = item.Elements("language").Select(e => e.Value).ToList();
+            }
+
+            foreach (var language in languages)
+            {
+                if (language.IsNotNullOrWhiteSpace())
+                {
+                    results.Add(language);
+                }
+            }
+
+            return results;
+        }
+
         protected override long GetSize(XElement item)
         {
-            long size;
-
             var sizeString = TryGetNewznabAttribute(item, "size");
-            if (!sizeString.IsNullOrWhiteSpace() && long.TryParse(sizeString, out size))
+            if (!sizeString.IsNullOrWhiteSpace() && long.TryParse(sizeString, out var size))
             {
                 return size;
             }
@@ -161,9 +188,8 @@ namespace NzbDrone.Core.Indexers.Headphones
         protected virtual int GetImdbId(XElement item)
         {
             var imdbIdString = TryGetNewznabAttribute(item, "imdb");
-            int imdbId;
 
-            if (!imdbIdString.IsNullOrWhiteSpace() && int.TryParse(imdbIdString, out imdbId))
+            if (!imdbIdString.IsNullOrWhiteSpace() && int.TryParse(imdbIdString, out var imdbId))
             {
                 return imdbId;
             }
@@ -174,9 +200,8 @@ namespace NzbDrone.Core.Indexers.Headphones
         protected virtual int GetGrabs(XElement item)
         {
             var grabsString = TryGetNewznabAttribute(item, "grabs");
-            int grabs;
 
-            if (!grabsString.IsNullOrWhiteSpace() && int.TryParse(grabsString, out grabs))
+            if (!grabsString.IsNullOrWhiteSpace() && int.TryParse(grabsString, out var grabs))
             {
                 return grabs;
             }
@@ -187,9 +212,8 @@ namespace NzbDrone.Core.Indexers.Headphones
         protected virtual int GetFiles(XElement item)
         {
             var filesString = TryGetNewznabAttribute(item, "files");
-            int files;
 
-            if (!filesString.IsNullOrWhiteSpace() && int.TryParse(filesString, out files))
+            if (!filesString.IsNullOrWhiteSpace() && int.TryParse(filesString, out var files))
             {
                 return files;
             }
@@ -200,9 +224,8 @@ namespace NzbDrone.Core.Indexers.Headphones
         protected virtual int GetImdbYear(XElement item)
         {
             var imdbYearString = TryGetNewznabAttribute(item, "imdbyear");
-            int imdbYear;
 
-            if (!imdbYearString.IsNullOrWhiteSpace() && int.TryParse(imdbYearString, out imdbYear))
+            if (!imdbYearString.IsNullOrWhiteSpace() && int.TryParse(imdbYearString, out var imdbYear))
             {
                 return imdbYear;
             }

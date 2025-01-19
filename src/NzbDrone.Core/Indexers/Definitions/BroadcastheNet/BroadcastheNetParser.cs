@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Text.RegularExpressions;
+using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.Indexers.Exceptions;
 using NzbDrone.Core.Parser.Model;
@@ -11,7 +12,7 @@ namespace NzbDrone.Core.Indexers.BroadcastheNet
 {
     public class BroadcastheNetParser : IParseIndexerResponse
     {
-        private static readonly Regex RegexProtocol = new Regex("^https?:", RegexOptions.Compiled);
+        private static readonly Regex RegexProtocol = new ("^https?:", RegexOptions.Compiled);
 
         public Action<IDictionary<string, string>, DateTime?> CookiesUpdater { get; set; }
 
@@ -24,9 +25,10 @@ namespace NzbDrone.Core.Indexers.BroadcastheNet
 
         public IList<ReleaseInfo> ParseResponse(IndexerResponse indexerResponse)
         {
-            var results = new List<ReleaseInfo>();
+            var releaseInfos = new List<ReleaseInfo>();
+            var indexerHttpResponse = indexerResponse.HttpResponse;
 
-            switch (indexerResponse.HttpResponse.StatusCode)
+            switch (indexerHttpResponse.StatusCode)
             {
                 case HttpStatusCode.Unauthorized:
                     throw new IndexerAuthException("API Key invalid or not authorized");
@@ -35,17 +37,22 @@ namespace NzbDrone.Core.Indexers.BroadcastheNet
                 case HttpStatusCode.ServiceUnavailable:
                     throw new RequestLimitReachedException(indexerResponse, "Cannot do more than 150 API requests per hour.");
                 default:
-                    if (indexerResponse.HttpResponse.StatusCode != HttpStatusCode.OK)
+                    if (indexerHttpResponse.StatusCode != HttpStatusCode.OK)
                     {
-                        throw new IndexerException(indexerResponse, "Indexer API call returned an unexpected StatusCode [{0}]", indexerResponse.HttpResponse.StatusCode);
+                        throw new IndexerException(indexerResponse, "Indexer API call returned an unexpected StatusCode [{0}]", indexerHttpResponse.StatusCode);
                     }
 
                     break;
             }
 
-            if (indexerResponse.HttpResponse.Headers.ContentType != null && indexerResponse.HttpResponse.Headers.ContentType.Contains("text/html"))
+            if (indexerHttpResponse.Headers.ContentType != null && indexerHttpResponse.Headers.ContentType.Contains("text/html"))
             {
                 throw new IndexerException(indexerResponse, "Indexer responded with html content. Site is likely blocked or unavailable.");
+            }
+
+            if (indexerResponse.Content.ContainsIgnoreCase("Call Limit Exceeded"))
+            {
+                throw new RequestLimitReachedException(indexerResponse, "Cannot do more than 150 API requests per hour.");
             }
 
             if (indexerResponse.Content == "Query execution was interrupted")
@@ -53,74 +60,91 @@ namespace NzbDrone.Core.Indexers.BroadcastheNet
                 throw new IndexerException(indexerResponse, "Indexer API returned an internal server error");
             }
 
-            JsonRpcResponse<BroadcastheNetTorrents> jsonResponse = new HttpResponse<JsonRpcResponse<BroadcastheNetTorrents>>(indexerResponse.HttpResponse).Resource;
+            var jsonResponse = new HttpResponse<JsonRpcResponse<BroadcastheNetTorrents>>(indexerHttpResponse).Resource;
 
             if (jsonResponse.Error != null || jsonResponse.Result == null)
             {
                 throw new IndexerException(indexerResponse, "Indexer API call returned an error [{0}]", jsonResponse.Error);
             }
 
-            if (jsonResponse.Result.Results == 0)
+            if (jsonResponse.Result.Results == 0 || jsonResponse.Result?.Torrents?.Values == null)
             {
-                return results;
+                return releaseInfos;
             }
 
             var protocol = indexerResponse.HttpRequest.Url.Scheme + ":";
 
             foreach (var torrent in jsonResponse.Result.Torrents.Values)
             {
-                var torrentInfo = new TorrentInfo();
+                var flags = new HashSet<IndexerFlag>();
 
-                torrentInfo.Guid = string.Format("BTN-{0}", torrent.TorrentID);
-                torrentInfo.Title = CleanReleaseName(torrent.ReleaseName);
-                torrentInfo.Size = torrent.Size;
-                torrentInfo.DownloadUrl = RegexProtocol.Replace(torrent.DownloadURL, protocol);
-                torrentInfo.InfoUrl = string.Format("{0}//broadcasthe.net/torrents.php?id={1}&torrentid={2}", protocol, torrent.GroupID, torrent.TorrentID);
-
-                //torrentInfo.CommentUrl =
-                if (torrent.TvdbID.HasValue)
+                if (torrent.Origin.ToUpperInvariant() == "INTERNAL")
                 {
-                    torrentInfo.TvdbId = torrent.TvdbID.Value;
+                    flags.Add(IndexerFlag.Internal);
                 }
 
-                if (torrent.TvrageID.HasValue)
+                var releaseInfo = new TorrentInfo
                 {
-                    torrentInfo.TvRageId = torrent.TvrageID.Value;
+                    Guid = $"BTN-{torrent.TorrentID}",
+                    InfoUrl = $"{protocol}//broadcasthe.net/torrents.php?id={torrent.GroupID}&torrentid={torrent.TorrentID}",
+                    DownloadUrl = RegexProtocol.Replace(torrent.DownloadURL, protocol),
+                    Title = GetTitle(torrent),
+                    Categories = _categories.MapTrackerCatToNewznab(torrent.Resolution),
+                    InfoHash = torrent.InfoHash,
+                    Size = torrent.Size,
+                    Grabs = torrent.Snatched,
+                    Seeders = torrent.Seeders,
+                    Peers = torrent.Leechers + torrent.Seeders,
+                    PublishDate = new DateTime(1970, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc).ToUniversalTime().AddSeconds(torrent.Time),
+                    Origin = torrent.Origin,
+                    Source = torrent.Source,
+                    Container = torrent.Container,
+                    Codec = torrent.Codec,
+                    Resolution = torrent.Resolution,
+                    Scene = torrent.Origin.ToUpperInvariant() == "SCENE",
+                    IndexerFlags = flags,
+                    DownloadVolumeFactor = 0,
+                    UploadVolumeFactor = 1,
+                    MinimumRatio = 1,
+                    MinimumSeedTime = torrent.Category.ToUpperInvariant() == "SEASON" ? 432000 : 86400, // 120 hours for seasons and 24 hours for episodes
+                };
+
+                if (torrent.TvdbID is > 0)
+                {
+                    releaseInfo.TvdbId = torrent.TvdbID.Value;
                 }
 
-                torrentInfo.PublishDate = new DateTime(1970, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc).ToUniversalTime().AddSeconds(torrent.Time);
+                if (torrent.TvrageID is > 0)
+                {
+                    releaseInfo.TvRageId = torrent.TvrageID.Value;
+                }
 
-                //torrentInfo.MagnetUrl =
-                torrentInfo.InfoHash = torrent.InfoHash;
-                torrentInfo.Seeders = torrent.Seeders;
-                torrentInfo.Peers = torrent.Leechers + torrent.Seeders;
-
-                torrentInfo.Origin = torrent.Origin;
-                torrentInfo.Source = torrent.Source;
-                torrentInfo.Container = torrent.Container;
-                torrentInfo.Codec = torrent.Codec;
-                torrentInfo.Resolution = torrent.Resolution;
-                torrentInfo.UploadVolumeFactor = 1;
-                torrentInfo.DownloadVolumeFactor = 0;
-                torrentInfo.MinimumRatio = 1;
-
-                torrentInfo.Categories = _categories.MapTrackerCatToNewznab(torrent.Resolution);
+                if (torrent.ImdbID.IsNotNullOrWhiteSpace() && int.TryParse(torrent.ImdbID, out var imdbId))
+                {
+                    releaseInfo.ImdbId = imdbId;
+                }
 
                 // Default to TV if category could not be mapped
-                if (torrentInfo.Categories == null || !torrentInfo.Categories.Any())
+                if (releaseInfo.Categories == null || !releaseInfo.Categories.Any())
                 {
-                    torrentInfo.Categories = new List<IndexerCategory> { NewznabStandardCategory.TV };
+                    releaseInfo.Categories = new List<IndexerCategory> { NewznabStandardCategory.TV };
                 }
 
-                results.Add(torrentInfo);
+                releaseInfos.Add(releaseInfo);
             }
 
-            return results;
+            return releaseInfos;
         }
 
-        private string CleanReleaseName(string releaseName)
+        private static string GetTitle(BroadcastheNetTorrent torrent)
         {
-            releaseName = releaseName.Replace("\\", "");
+            var releaseName = torrent.ReleaseName.Replace("\\", "");
+
+            if (torrent.Container.ToUpperInvariant() is "M2TS" or "ISO")
+            {
+                releaseName = Regex.Replace(releaseName, @"\b(H\.?265)\b", "HEVC", RegexOptions.Compiled);
+                releaseName = Regex.Replace(releaseName, @"\b(H\.?264)\b", "AVC", RegexOptions.Compiled);
+            }
 
             return releaseName;
         }

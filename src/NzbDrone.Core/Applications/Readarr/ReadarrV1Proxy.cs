@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Net;
+using System.Net.Http;
 using FluentValidation.Results;
 using Newtonsoft.Json;
 using NLog;
@@ -22,6 +23,8 @@ namespace NzbDrone.Core.Applications.Readarr
 
     public class ReadarrV1Proxy : IReadarrV1Proxy
     {
+        private const string AppApiRoute = "/api/v1";
+        private const string AppIndexerApiRoute = $"{AppApiRoute}/indexer";
         private readonly IHttpClient _httpClient;
         private readonly Logger _logger;
 
@@ -33,13 +36,13 @@ namespace NzbDrone.Core.Applications.Readarr
 
         public ReadarrStatus GetStatus(ReadarrSettings settings)
         {
-            var request = BuildRequest(settings, "/api/v1/system/status", HttpMethod.GET);
+            var request = BuildRequest(settings, $"{AppApiRoute}/system/status", HttpMethod.Get);
             return Execute<ReadarrStatus>(request);
         }
 
         public List<ReadarrIndexer> GetIndexers(ReadarrSettings settings)
         {
-            var request = BuildRequest(settings, "/api/v1/indexer", HttpMethod.GET);
+            var request = BuildRequest(settings, $"{AppIndexerApiRoute}", HttpMethod.Get);
             return Execute<List<ReadarrIndexer>>(request);
         }
 
@@ -47,7 +50,7 @@ namespace NzbDrone.Core.Applications.Readarr
         {
             try
             {
-                var request = BuildRequest(settings, $"/api/v1/indexer/{indexerId}", HttpMethod.GET);
+                var request = BuildRequest(settings, $"{AppIndexerApiRoute}/{indexerId}", HttpMethod.Get);
                 return Execute<ReadarrIndexer>(request);
             }
             catch (HttpException ex)
@@ -63,75 +66,125 @@ namespace NzbDrone.Core.Applications.Readarr
 
         public void RemoveIndexer(int indexerId, ReadarrSettings settings)
         {
-            var request = BuildRequest(settings, $"/api/v1/indexer/{indexerId}", HttpMethod.DELETE);
+            var request = BuildRequest(settings, $"{AppIndexerApiRoute}/{indexerId}", HttpMethod.Delete);
             _httpClient.Execute(request);
         }
 
         public List<ReadarrIndexer> GetIndexerSchema(ReadarrSettings settings)
         {
-            var request = BuildRequest(settings, "/api/v1/indexer/schema", HttpMethod.GET);
+            var request = BuildRequest(settings, $"{AppIndexerApiRoute}/schema", HttpMethod.Get);
             return Execute<List<ReadarrIndexer>>(request);
         }
 
         public ReadarrIndexer AddIndexer(ReadarrIndexer indexer, ReadarrSettings settings)
         {
-            var request = BuildRequest(settings, "/api/v1/indexer", HttpMethod.POST);
+            var request = BuildRequest(settings, $"{AppIndexerApiRoute}", HttpMethod.Post);
 
             request.SetContent(indexer.ToJson());
+            request.ContentSummary = indexer.ToJson(Formatting.None);
 
-            return Execute<ReadarrIndexer>(request);
+            try
+            {
+                return ExecuteIndexerRequest(request);
+            }
+            catch (HttpException ex) when (ex.Response.StatusCode == HttpStatusCode.BadRequest)
+            {
+                _logger.Debug("Retrying to add indexer forcefully");
+
+                request.Url = request.Url.AddQueryParam("forceSave", "true");
+
+                return ExecuteIndexerRequest(request);
+            }
         }
 
         public ReadarrIndexer UpdateIndexer(ReadarrIndexer indexer, ReadarrSettings settings)
         {
-            var request = BuildRequest(settings, $"/api/v1/indexer/{indexer.Id}", HttpMethod.PUT);
+            var request = BuildRequest(settings, $"{AppIndexerApiRoute}/{indexer.Id}", HttpMethod.Put);
 
             request.SetContent(indexer.ToJson());
+            request.ContentSummary = indexer.ToJson(Formatting.None);
 
-            return Execute<ReadarrIndexer>(request);
+            try
+            {
+                return ExecuteIndexerRequest(request);
+            }
+            catch (HttpException ex) when (ex.Response.StatusCode == HttpStatusCode.BadRequest)
+            {
+                _logger.Debug("Retrying to update indexer forcefully");
+
+                request.Url = request.Url.AddQueryParam("forceSave", "true");
+
+                return ExecuteIndexerRequest(request);
+            }
         }
 
         public ValidationFailure TestConnection(ReadarrIndexer indexer, ReadarrSettings settings)
         {
-            var request = BuildRequest(settings, $"/api/v1/indexer/test", HttpMethod.POST);
+            var request = BuildRequest(settings, $"{AppIndexerApiRoute}/test", HttpMethod.Post);
 
             request.SetContent(indexer.ToJson());
+            request.ContentSummary = indexer.ToJson(Formatting.None);
 
+            _httpClient.Post(request);
+
+            return null;
+        }
+
+        private ReadarrIndexer ExecuteIndexerRequest(HttpRequest request)
+        {
             try
             {
-                Execute<ReadarrIndexer>(request);
+                return Execute<ReadarrIndexer>(request);
             }
             catch (HttpException ex)
             {
-                if (ex.Response.StatusCode == HttpStatusCode.Unauthorized)
+                switch (ex.Response.StatusCode)
                 {
-                    _logger.Error(ex, "API Key is invalid");
-                    return new ValidationFailure("ApiKey", "API Key is invalid");
+                    case HttpStatusCode.Unauthorized:
+                        _logger.Warn(ex, "API Key is invalid");
+                        break;
+                    case HttpStatusCode.BadRequest:
+                        if (ex.Response.Content.Contains("Query successful, but no results in the configured categories were returned from your indexer.", StringComparison.InvariantCultureIgnoreCase))
+                        {
+                            _logger.Warn(ex, "No Results in configured categories. See FAQ Entry: Prowlarr will not sync X Indexer to App");
+                            break;
+                        }
+
+                        _logger.Error(ex, "Invalid Request");
+                        break;
+                    case HttpStatusCode.SeeOther:
+                    case HttpStatusCode.TemporaryRedirect:
+                        _logger.Warn(ex, "App returned redirect and is invalid. Check App URL");
+                        break;
+                    case HttpStatusCode.NotFound:
+                        _logger.Warn(ex, "Remote indexer not found");
+                        break;
+                    default:
+                        _logger.Error(ex, "Unexpected response status code: {0}", ex.Response.StatusCode);
+                        break;
                 }
 
-                if (ex.Response.StatusCode == HttpStatusCode.BadRequest)
-                {
-                    _logger.Error(ex, "Prowlarr URL is invalid");
-                    return new ValidationFailure("ProwlarrUrl", "Prowlarr url is invalid, Readarr cannot connect to Prowlarr");
-                }
-
-                _logger.Error(ex, "Unable to send test message");
-                return new ValidationFailure("BaseUrl", "Unable to complete application test");
+                throw;
+            }
+            catch (JsonReaderException ex)
+            {
+                _logger.Error(ex, "Unable to parse JSON response from application");
+                throw;
             }
             catch (Exception ex)
             {
-                _logger.Error(ex, "Unable to send test message");
-                return new ValidationFailure("", "Unable to send test message");
+                _logger.Error(ex, "Unable to add or update indexer");
+                throw;
             }
-
-            return null;
         }
 
         private HttpRequest BuildRequest(ReadarrSettings settings, string resource, HttpMethod method)
         {
             var baseUrl = settings.BaseUrl.TrimEnd('/');
 
-            var request = new HttpRequestBuilder(baseUrl).Resource(resource)
+            var request = new HttpRequestBuilder(baseUrl)
+                .Resource(resource)
+                .Accept(HttpAccept.Json)
                 .SetHeader("X-Api-Key", settings.ApiKey)
                 .Build();
 
@@ -148,9 +201,12 @@ namespace NzbDrone.Core.Applications.Readarr
         {
             var response = _httpClient.Execute(request);
 
-            var results = JsonConvert.DeserializeObject<TResource>(response.Content);
+            if ((int)response.StatusCode >= 300)
+            {
+                throw new HttpException(response);
+            }
 
-            return results;
+            return Json.Deserialize<TResource>(response.Content);
         }
     }
 }

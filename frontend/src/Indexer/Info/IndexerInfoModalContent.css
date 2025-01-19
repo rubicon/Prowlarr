@@ -3,3 +3,47 @@
 
   overflow-wrap: break-word;
 }
+
+.deleteButton {
+  composes: button from '~Components/Link/Button.css';
+
+  margin-right: auto;
+}
+
+.tabs {
+  margin-top: -32px;
+}
+
+.tabList {
+  margin: 0;
+  padding: 0;
+}
+
+.tab {
+  position: relative;
+  bottom: -1px;
+  display: inline-block;
+  padding: 6px 12px;
+  border: 1px solid transparent;
+  border-top: none;
+  list-style: none;
+  cursor: pointer;
+}
+
+.selectedTab {
+  border-color: var(--borderColor);
+  border-radius: 0 0 5px 5px;
+  background-color: rgba(239, 239, 239, 0.4);
+  color: var(--black);
+}
+
+.tabContent {
+  margin-top: 20px;
+}
+
+.modalFooter {
+  composes: modalFooter from '~Components/Modal/ModalFooter.css';
+
+  justify-content: space-between;
+}
+

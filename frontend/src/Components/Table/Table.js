@@ -107,7 +107,7 @@ function Table(props) {
                   {...getTableHeaderCellProps(otherProps)}
                   {...column}
                 >
-                  {column.label}
+                  {typeof column.label === 'function' ? column.label() : column.label}
                 </TableHeaderCell>
               );
             })
@@ -121,6 +121,7 @@ function Table(props) {
 }
 
 Table.propTypes = {
+  ...TableHeaderCell.props,
   className: PropTypes.string,
   horizontalScroll: PropTypes.bool.isRequired,
   selectAll: PropTypes.bool.isRequired,

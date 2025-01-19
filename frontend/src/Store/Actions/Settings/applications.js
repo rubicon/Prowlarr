@@ -1,10 +1,14 @@
 import { createAction } from 'redux-actions';
+import { sortDirections } from 'Helpers/Props';
+import createBulkEditItemHandler from 'Store/Actions/Creators/createBulkEditItemHandler';
+import createBulkRemoveItemHandler from 'Store/Actions/Creators/createBulkRemoveItemHandler';
 import createFetchHandler from 'Store/Actions/Creators/createFetchHandler';
 import createFetchSchemaHandler from 'Store/Actions/Creators/createFetchSchemaHandler';
 import createRemoveItemHandler from 'Store/Actions/Creators/createRemoveItemHandler';
 import createSaveProviderHandler, { createCancelSaveProviderHandler } from 'Store/Actions/Creators/createSaveProviderHandler';
 import createTestAllProvidersHandler from 'Store/Actions/Creators/createTestAllProvidersHandler';
 import createTestProviderHandler, { createCancelTestProviderHandler } from 'Store/Actions/Creators/createTestProviderHandler';
+import createSetClientSideCollectionSortReducer from 'Store/Actions/Creators/Reducers/createSetClientSideCollectionSortReducer';
 import createSetProviderFieldValueReducer from 'Store/Actions/Creators/Reducers/createSetProviderFieldValueReducer';
 import createSetSettingValueReducer from 'Store/Actions/Creators/Reducers/createSetSettingValueReducer';
 import { createThunk } from 'Store/thunks';
@@ -28,7 +32,10 @@ export const CANCEL_SAVE_APPLICATION = 'settings/applications/cancelSaveApplicat
 export const DELETE_APPLICATION = 'settings/applications/deleteApplication';
 export const TEST_APPLICATION = 'settings/applications/testApplication';
 export const CANCEL_TEST_APPLICATION = 'settings/applications/cancelTestApplication';
-export const TEST_ALL_APPLICATIONS = 'indexers/testAllApplications';
+export const TEST_ALL_APPLICATIONS = 'settings/applications/testAllApplications';
+export const BULK_EDIT_APPLICATIONS = 'settings/applications/bulkEditApplications';
+export const BULK_DELETE_APPLICATIONS = 'settings/applications/bulkDeleteApplications';
+export const SET_MANAGE_APPLICATIONS_SORT = 'settings/applications/setManageApplicationsSort';
 
 //
 // Action Creators
@@ -43,6 +50,9 @@ export const deleteApplication = createThunk(DELETE_APPLICATION);
 export const testApplication = createThunk(TEST_APPLICATION);
 export const cancelTestApplication = createThunk(CANCEL_TEST_APPLICATION);
 export const testAllApplications = createThunk(TEST_ALL_APPLICATIONS);
+export const bulkEditApplications = createThunk(BULK_EDIT_APPLICATIONS);
+export const bulkDeleteApplications = createThunk(BULK_DELETE_APPLICATIONS);
+export const setManageApplicationsSort = createAction(SET_MANAGE_APPLICATIONS_SORT);
 
 export const setApplicationValue = createAction(SET_APPLICATION_VALUE, (payload) => {
   return {
@@ -77,10 +87,19 @@ export default {
     selectedSchema: {},
     isSaving: false,
     saveError: null,
+    isDeleting: false,
+    deleteError: null,
     isTesting: false,
     isTestingAll: false,
     items: [],
-    pendingChanges: {}
+    pendingChanges: {},
+    sortKey: 'name',
+    sortDirection: sortDirections.ASCENDING,
+    sortPredicates: {
+      name: function(item) {
+        return item.name.toLowerCase();
+      }
+    }
   },
 
   //
@@ -95,7 +114,9 @@ export default {
     [DELETE_APPLICATION]: createRemoveItemHandler(section, '/applications'),
     [TEST_APPLICATION]: createTestProviderHandler(section, '/applications'),
     [CANCEL_TEST_APPLICATION]: createCancelTestProviderHandler(section),
-    [TEST_ALL_APPLICATIONS]: createTestAllProvidersHandler(section, '/applications')
+    [TEST_ALL_APPLICATIONS]: createTestAllProvidersHandler(section, '/applications'),
+    [BULK_EDIT_APPLICATIONS]: createBulkEditItemHandler(section, '/applications/bulk'),
+    [BULK_DELETE_APPLICATIONS]: createBulkRemoveItemHandler(section, '/applications/bulk')
   },
 
   //
@@ -107,14 +128,14 @@ export default {
 
     [SELECT_APPLICATION_SCHEMA]: (state, { payload }) => {
       return selectProviderSchema(state, section, payload, (selectedSchema) => {
-        selectedSchema.onGrab = selectedSchema.supportsOnGrab;
-        selectedSchema.onDownload = selectedSchema.supportsOnDownload;
-        selectedSchema.onUpgrade = selectedSchema.supportsOnUpgrade;
-        selectedSchema.onRename = selectedSchema.supportsOnRename;
+        selectedSchema.name = selectedSchema.implementationName;
 
         return selectedSchema;
       });
-    }
+    },
+
+    [SET_MANAGE_APPLICATIONS_SORT]: createSetClientSideCollectionSortReducer(section)
+
   }
 
 };

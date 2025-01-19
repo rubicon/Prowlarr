@@ -4,9 +4,11 @@ import * as commands from './commandActions';
 import * as customFilters from './customFilterActions';
 import * as history from './historyActions';
 import * as indexers from './indexerActions';
+import * as indexerHistory from './indexerHistoryActions';
 import * as indexerIndex from './indexerIndexActions';
 import * as indexerStats from './indexerStatsActions';
 import * as indexerStatus from './indexerStatusActions';
+import * as localization from './localizationActions';
 import * as oAuth from './oAuthActions';
 import * as paths from './pathActions';
 import * as providerOptions from './providerOptionActions';
@@ -25,7 +27,9 @@ export default [
   paths,
   providerOptions,
   releases,
+  localization,
   indexers,
+  indexerHistory,
   indexerIndex,
   indexerStats,
   indexerStatus,

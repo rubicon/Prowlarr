@@ -82,7 +82,12 @@ namespace NzbDrone.Core.Indexers
                 }
             }
 
-            return !PostProcess(indexerResponse, items, releases) ? new List<ReleaseInfo>() : releases;
+            if (!PostProcess(indexerResponse, items, releases))
+            {
+                return Array.Empty<ReleaseInfo>();
+            }
+
+            return releases;
         }
 
         public Action<IDictionary<string, string>, DateTime?> CookiesUpdater { get; set; }
@@ -156,11 +161,13 @@ namespace NzbDrone.Core.Indexers
         {
             releaseInfo.Guid = GetGuid(item);
             releaseInfo.Title = GetTitle(item);
+            releaseInfo.Description = GetDescription(item);
             releaseInfo.PublishDate = GetPublishDate(item);
             releaseInfo.DownloadUrl = GetDownloadUrl(item);
             releaseInfo.InfoUrl = GetInfoUrl(item);
             releaseInfo.CommentUrl = GetCommentUrl(item);
             releaseInfo.Categories = GetCategory(item);
+            releaseInfo.Languages = GetLanguages(item);
 
             try
             {
@@ -189,6 +196,11 @@ namespace NzbDrone.Core.Indexers
             return item.TryGetValue("title", "Unknown");
         }
 
+        protected virtual string GetDescription(XElement item)
+        {
+            return item.TryGetValue("description", null);
+        }
+
         protected virtual ICollection<IndexerCategory> GetCategory(XElement item)
         {
             return new List<IndexerCategory> { NewznabStandardCategory.Other };
@@ -200,7 +212,7 @@ namespace NzbDrone.Core.Indexers
 
             if (dateString.IsNullOrWhiteSpace())
             {
-                throw new UnsupportedFeedException("Rss feed must have a pubDate element with a valid publish date.");
+                throw new UnsupportedFeedException("Each item in the RSS feed must have a pubDate element with a valid publish date.");
             }
 
             return XElementExtensions.ParseDate(dateString);
@@ -230,6 +242,11 @@ namespace NzbDrone.Core.Indexers
         protected virtual string GetCommentUrl(XElement item)
         {
             return ParseUrl((string)item.Element("comments"));
+        }
+
+        protected virtual List<string> GetLanguages(XElement item)
+        {
+            return new List<string>();
         }
 
         protected virtual long GetSize(XElement item)
@@ -262,26 +279,26 @@ namespace NzbDrone.Core.Indexers
         protected virtual RssEnclosure[] GetEnclosures(XElement item)
         {
             var enclosures = item.Elements("enclosure")
-                                 .Select(v =>
-                                 {
-                                     try
-                                     {
-                                         return new RssEnclosure
-                                         {
-                                             Url = v.Attribute("url").Value,
-                                             Type = v.Attribute("type").Value,
-                                             Length = (long)v.Attribute("length")
-                                         };
-                                     }
-                                     catch (Exception e)
-                                     {
-                                         _logger.Warn(e, "Failed to get enclosure for: {0}", item.Title());
-                                     }
+                .Select(v =>
+                {
+                    try
+                    {
+                        return new RssEnclosure
+                        {
+                            Url = v.Attribute("url")?.Value,
+                            Type = v.Attribute("type")?.Value,
+                            Length = v.Attribute("length")?.Value?.ParseInt64() ?? 0
+                        };
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.Warn(ex, "Failed to get enclosure for: {0}", item.Title());
+                    }
 
-                                     return null;
-                                 })
-                                 .Where(v => v != null)
-                                 .ToArray();
+                    return null;
+                })
+                .Where(v => v != null)
+                .ToArray();
 
             return enclosures;
         }

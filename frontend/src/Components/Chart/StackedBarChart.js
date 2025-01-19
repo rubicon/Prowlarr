@@ -1,7 +1,13 @@
 import Chart from 'chart.js/auto';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
-import colors from 'Styles/Variables/colors';
+import { defaultFontFamily } from 'Styles/Variables/fonts';
+
+function getColors(index) {
+
+  const style = getComputedStyle(document.body);
+  return style.getPropertyValue('--chartColorsDiversified').split(',')[index];
+}
 
 class StackedBarChart extends Component {
   constructor(props) {
@@ -31,7 +37,19 @@ class StackedBarChart extends Component {
         plugins: {
           title: {
             display: true,
-            text: this.props.title
+            align: 'start',
+            text: this.props.title,
+            padding: {
+              bottom: 30
+            },
+            font: {
+              size: 14,
+              family: defaultFontFamily
+            }
+          },
+          tooltip: {
+            mode: 'index',
+            position: 'average'
           }
         }
       },
@@ -41,7 +59,7 @@ class StackedBarChart extends Component {
           return {
             label: d.label,
             data: d.data,
-            backgroundColor: colors.chartColors[index]
+            backgroundColor: getColors(index)
           };
         })
       }
@@ -54,7 +72,7 @@ class StackedBarChart extends Component {
       return {
         label: d.label,
         data: d.data,
-        backgroundColor: colors.chartColors[index]
+        backgroundColor: getColors(index)
       };
     });
     this.myChart.update();

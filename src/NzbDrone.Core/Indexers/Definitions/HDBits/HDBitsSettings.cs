@@ -1,79 +1,94 @@
+using System;
 using System.Collections.Generic;
 using FluentValidation;
 using NzbDrone.Core.Annotations;
+using NzbDrone.Core.Indexers.Settings;
 using NzbDrone.Core.Validation;
 
-namespace NzbDrone.Core.Indexers.HDBits
+namespace NzbDrone.Core.Indexers.Definitions.HDBits
 {
-    public class HDBitsSettingsValidator : AbstractValidator<HDBitsSettings>
+    public class HDBitsSettingsValidator : NoAuthSettingsValidator<HDBitsSettings>
     {
         public HDBitsSettingsValidator()
         {
+            RuleFor(c => c.Username).NotEmpty();
             RuleFor(c => c.ApiKey).NotEmpty();
         }
     }
 
-    public class HDBitsSettings : IIndexerSettings
+    public class HDBitsSettings : NoAuthTorrentBaseSettings
     {
-        private static readonly HDBitsSettingsValidator Validator = new HDBitsSettingsValidator();
+        private static readonly HDBitsSettingsValidator Validator = new ();
 
         public HDBitsSettings()
         {
-            Codecs = System.Array.Empty<int>();
-            Mediums = System.Array.Empty<int>();
+            Codecs = Array.Empty<int>();
+            Mediums = Array.Empty<int>();
+            Origins = Array.Empty<int>();
+            FreeleechOnly = false;
+            UseFilenames = true;
         }
 
-        [FieldDefinition(1, Label = "Base Url", Type = FieldType.Select, SelectOptionsProviderAction = "getUrls", HelpText = "Select which baseurl Prowlarr will use for requests to the site")]
-        public string BaseUrl { get; set; }
-
-        [FieldDefinition(2, Label = "Username", HelpText = "Site Username", Privacy = PrivacyLevel.UserName)]
+        [FieldDefinition(2, Label = "Username", HelpText = "IndexerHDBitsSettingsUsernameHelpText", Privacy = PrivacyLevel.UserName)]
         public string Username { get; set; }
 
-        [FieldDefinition(3, Label = "API Key", HelpText = "Site API Key", Privacy = PrivacyLevel.ApiKey)]
+        [FieldDefinition(3, Label = "IndexerSettingsPasskey", HelpText = "IndexerHDBitsSettingsPasskeyHelpText", Privacy = PrivacyLevel.ApiKey)]
         public string ApiKey { get; set; }
 
-        [FieldDefinition(4, Label = "Codecs", Type = FieldType.TagSelect, SelectOptions = typeof(HdBitsCodec), Advanced = true, HelpText = "Options: h264, Mpeg2, VC1, Xvid. If unspecified, all options are used.")]
+        [FieldDefinition(4, Label = "IndexerHDBitsSettingsCodecs", Type = FieldType.Select, SelectOptions = typeof(HdBitsCodec), HelpText = "IndexerHDBitsSettingsCodecsHelpText", Advanced = true)]
         public IEnumerable<int> Codecs { get; set; }
 
-        [FieldDefinition(5, Label = "Mediums", Type = FieldType.TagSelect, SelectOptions = typeof(HdBitsMedium), Advanced = true, HelpText = "Options: BluRay, Encode, Capture, Remux, WebDL. If unspecified, all options are used.")]
+        [FieldDefinition(5, Label = "IndexerHDBitsSettingsMediums", Type = FieldType.Select, SelectOptions = typeof(HdBitsMedium), HelpText = "IndexerHDBitsSettingsMediumsHelpText", Advanced = true)]
         public IEnumerable<int> Mediums { get; set; }
 
-        [FieldDefinition(6)]
-        public IndexerBaseSettings BaseSettings { get; set; } = new IndexerBaseSettings();
+        [FieldDefinition(6, Label = "IndexerHDBitsSettingsOrigins", Type = FieldType.Select, SelectOptions = typeof(HdBitsOrigin), HelpText = "IndexerHDBitsSettingsOriginsHelpText", Advanced = true)]
+        public IEnumerable<int> Origins { get; set; }
 
-        public NzbDroneValidationResult Validate()
+        [FieldDefinition(7, Label = "IndexerSettingsFreeleechOnly", Type = FieldType.Checkbox, HelpText = "IndexerHDBitsSettingsFreeleechOnlyHelpText", Advanced = true)]
+        public bool FreeleechOnly { get; set; }
+
+        [FieldDefinition(8, Label = "IndexerHDBitsSettingsUseFilenames", Type = FieldType.Checkbox, HelpText = "IndexerHDBitsSettingsUseFilenamesHelpText")]
+        public bool UseFilenames { get; set; }
+
+        public override NzbDroneValidationResult Validate()
         {
             return new NzbDroneValidationResult(Validator.Validate(this));
         }
     }
 
-    public enum HdBitsCategory
-    {
-        Movie = 1,
-        Tv = 2,
-        Documentary = 3,
-        Music = 4,
-        Sport = 5,
-        Audio = 6,
-        Xxx = 7,
-        MiscDemo = 8
-    }
-
     public enum HdBitsCodec
     {
+        [FieldOption("H.264")]
         H264 = 1,
+        [FieldOption("MPEG-2")]
         Mpeg2 = 2,
+        [FieldOption("VC-1")]
         Vc1 = 3,
+        [FieldOption("XviD")]
         Xvid = 4,
+        [FieldOption("HEVC")]
         HEVC = 5
     }
 
     public enum HdBitsMedium
     {
+        [FieldOption("Blu-ray/HD DVD")]
         Bluray = 1,
+        [FieldOption("Encode")]
         Encode = 3,
+        [FieldOption("Capture")]
         Capture = 4,
+        [FieldOption("Remux")]
         Remux = 5,
+        [FieldOption("WEB-DL")]
         WebDl = 6
+    }
+
+    public enum HdBitsOrigin
+    {
+        [FieldOption("Undefined")]
+        Undefined = 0,
+        [FieldOption("Internal")]
+        Internal = 1
     }
 }

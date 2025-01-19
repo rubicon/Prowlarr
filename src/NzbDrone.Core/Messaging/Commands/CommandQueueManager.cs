@@ -105,6 +105,8 @@ namespace NzbDrone.Core.Messaging.Commands
             _logger.Trace("Publishing {0}", command.Name);
             _logger.Trace("Checking if command is queued or started: {0}", command.Name);
 
+            command.Trigger = trigger;
+
             lock (_commandQueue)
             {
                 var existingCommands = QueuedOrStarted(command.Name);
@@ -138,10 +140,9 @@ namespace NzbDrone.Core.Messaging.Commands
 
         public CommandModel Push(string commandName, DateTime? lastExecutionTime, DateTime? lastStartTime, CommandPriority priority = CommandPriority.Normal, CommandTrigger trigger = CommandTrigger.Unspecified)
         {
-            dynamic command = GetCommand(commandName);
+            var command = GetCommand(commandName);
             command.LastExecutionTime = lastExecutionTime;
             command.LastStartTime = lastStartTime;
-            command.Trigger = trigger;
 
             return Push(command, priority, trigger);
         }
@@ -232,13 +233,13 @@ namespace NzbDrone.Core.Messaging.Commands
             _repo.Trim();
         }
 
-        private dynamic GetCommand(string commandName)
+        private Command GetCommand(string commandName)
         {
             commandName = commandName.Split('.').Last();
             var commands = _knownTypes.GetImplementations(typeof(Command));
             var commandType = commands.Single(c => c.Name.Equals(commandName, StringComparison.InvariantCultureIgnoreCase));
 
-            return Json.Deserialize("{}", commandType);
+            return Json.Deserialize("{}", commandType) as Command;
         }
 
         private void Update(CommandModel command, CommandStatus status, string message)

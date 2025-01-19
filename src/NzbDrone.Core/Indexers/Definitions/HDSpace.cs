@@ -2,33 +2,32 @@ using System;
 using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.Linq;
+using System.Net;
 using System.Text;
-using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using AngleSharp.Html.Parser;
-using FluentValidation;
 using NLog;
+using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.Annotations;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Indexers.Exceptions;
+using NzbDrone.Core.Indexers.Settings;
 using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
-using NzbDrone.Core.Validation;
 
 namespace NzbDrone.Core.Indexers.Definitions
 {
+    [Obsolete("Moved to YML for Cardigann")]
     public class HDSpace : TorrentIndexerBase<HDSpaceSettings>
     {
         public override string Name => "HD-Space";
-        public override string[] IndexerUrls => new string[] { "https://hd-space.org/" };
-        private string LoginUrl => Settings.BaseUrl + "index.php?page=login";
+        public override string[] IndexerUrls => new[] { "https://hd-space.org/" };
         public override string Description => "HD-Space (HDS) is a Private Torrent Tracker for HD MOVIES / TV";
         public override string Language => "en-US";
         public override Encoding Encoding => Encoding.UTF8;
-        public override DownloadProtocol Protocol => DownloadProtocol.Torrent;
         public override IndexerPrivacy Privacy => IndexerPrivacy.Private;
         public override IndexerCapabilities Capabilities => SetCapabilities();
 
@@ -39,7 +38,7 @@ namespace NzbDrone.Core.Indexers.Definitions
 
         public override IIndexerRequestGenerator GetRequestGenerator()
         {
-            return new HDSpaceRequestGenerator() { Settings = Settings, Capabilities = Capabilities };
+            return new HDSpaceRequestGenerator { Settings = Settings, Capabilities = Capabilities };
         }
 
         public override IParseIndexerResponse GetParser()
@@ -49,56 +48,52 @@ namespace NzbDrone.Core.Indexers.Definitions
 
         protected override async Task DoLogin()
         {
-            var loginPage = await ExecuteAuth(new HttpRequest(LoginUrl));
+            var loginUrl = Settings.BaseUrl + "index.php?page=login";
 
-            var requestBuilder = new HttpRequestBuilder(LoginUrl)
+            var loginPage = await ExecuteAuth(new HttpRequest(loginUrl));
+
+            var requestBuilder = new HttpRequestBuilder(loginUrl)
             {
                 LogResponseContent = true,
                 AllowAutoRedirect = true
             };
 
-            requestBuilder.Method = HttpMethod.POST;
-            requestBuilder.PostProcess += r => r.RequestTimeout = TimeSpan.FromSeconds(15);
-
             var cookies = Cookies;
-
             Cookies = null;
 
             var authLoginRequest = requestBuilder
+                .Post()
                 .AddFormParameter("uid", Settings.Username)
                 .AddFormParameter("pwd", Settings.Password)
                 .SetCookies(loginPage.GetCookies())
-                .SetHeader("Content-Type", "multipart/form-data")
-                .SetHeader("Referer", LoginUrl)
+                .SetHeader("Content-Type", "application/x-www-form-urlencoded")
+                .SetHeader("Referer", loginUrl)
                 .Build();
 
             var response = await ExecuteAuth(authLoginRequest);
 
             if (CheckIfLoginNeeded(response))
             {
-                var errorStr = "Login Failed: You have {0} remaining login attempts";
-                var remainingAttemptSpan = new Regex(string.Format(errorStr, "(.*?)"))
-                                           .Match(loginPage.Content).Groups[1].ToString();
-                var attempts = Regex.Replace(remainingAttemptSpan, "<.*?>", string.Empty);
-                var errorMessage = string.Format(errorStr, attempts);
+                var parser = new HtmlParser();
+                using var dom = parser.ParseDocument(response.Content);
+                var errorMessages = dom
+                    .QuerySelectorAll("table.lista td.lista span[style*=\"#FF0000\"], table.lista td.header:contains(\"login attempts\")")
+                    .Select(r => r.TextContent.Trim())
+                    .Where(m => m.IsNotNullOrWhiteSpace())
+                    .ToArray();
 
-                throw new IndexerAuthException(errorMessage);
+                throw new IndexerAuthException(errorMessages.Any() ? errorMessages.Join(" ") : "Unknown error message, please report.");
             }
 
             cookies = response.GetCookies();
-            UpdateCookies(cookies, DateTime.Now + TimeSpan.FromDays(30));
+            UpdateCookies(cookies, DateTime.Now.AddDays(30));
 
             _logger.Debug("HDSpace authentication succeeded.");
         }
 
         protected override bool CheckIfLoginNeeded(HttpResponse httpResponse)
         {
-            if (!httpResponse.Content.Contains("logout.php"))
-            {
-                return true;
-            }
-
-            return false;
+            return !httpResponse.Content.Contains("logout.php") && !httpResponse.Content.Contains("Rank: Parked");
         }
 
         private IndexerCapabilities SetCapabilities()
@@ -106,35 +101,40 @@ namespace NzbDrone.Core.Indexers.Definitions
             var caps = new IndexerCapabilities
             {
                 TvSearchParams = new List<TvSearchParam>
-                                   {
-                                       TvSearchParam.Q, TvSearchParam.Season, TvSearchParam.Ep, TvSearchParam.ImdbId
-                                   },
+                {
+                    TvSearchParam.Q, TvSearchParam.Season, TvSearchParam.Ep, TvSearchParam.ImdbId
+                },
                 MovieSearchParams = new List<MovieSearchParam>
-                                   {
-                                       MovieSearchParam.Q, MovieSearchParam.ImdbId
-                                   },
+                {
+                    MovieSearchParam.Q, MovieSearchParam.ImdbId
+                },
                 MusicSearchParams = new List<MusicSearchParam>
-                                   {
-                                       MusicSearchParam.Q
-                                   }
+                {
+                    MusicSearchParam.Q
+                }
             };
 
             caps.Categories.AddCategoryMapping(15, NewznabStandardCategory.MoviesBluRay, "Movie / Blu-ray");
             caps.Categories.AddCategoryMapping(19, NewznabStandardCategory.MoviesHD, "Movie / 1080p");
             caps.Categories.AddCategoryMapping(18, NewznabStandardCategory.MoviesHD, "Movie / 720p");
+            caps.Categories.AddCategoryMapping(46, NewznabStandardCategory.MoviesUHD, "Movie / 2160p");
             caps.Categories.AddCategoryMapping(40, NewznabStandardCategory.MoviesHD, "Movie / Remux");
             caps.Categories.AddCategoryMapping(16, NewznabStandardCategory.MoviesHD, "Movie / HD-DVD");
             caps.Categories.AddCategoryMapping(41, NewznabStandardCategory.MoviesUHD, "Movie / 4K UHD");
             caps.Categories.AddCategoryMapping(21, NewznabStandardCategory.TVHD, "TV Show / 720p HDTV");
             caps.Categories.AddCategoryMapping(22, NewznabStandardCategory.TVHD, "TV Show / 1080p HDTV");
+            caps.Categories.AddCategoryMapping(45, NewznabStandardCategory.TVUHD, "TV Show / 2160p HDTV");
             caps.Categories.AddCategoryMapping(24, NewznabStandardCategory.TVDocumentary, "Documentary / 720p");
             caps.Categories.AddCategoryMapping(25, NewznabStandardCategory.TVDocumentary, "Documentary / 1080p");
+            caps.Categories.AddCategoryMapping(47, NewznabStandardCategory.TVDocumentary, "Documentary / 2160p");
             caps.Categories.AddCategoryMapping(27, NewznabStandardCategory.TVAnime, "Animation / 720p");
             caps.Categories.AddCategoryMapping(28, NewznabStandardCategory.TVAnime, "Animation / 1080p");
+            caps.Categories.AddCategoryMapping(48, NewznabStandardCategory.TVAnime, "Animation / 2160p");
             caps.Categories.AddCategoryMapping(30, NewznabStandardCategory.AudioLossless, "Music / HQ Audio");
             caps.Categories.AddCategoryMapping(31, NewznabStandardCategory.AudioVideo, "Music / Videos");
             caps.Categories.AddCategoryMapping(33, NewznabStandardCategory.XXX, "XXX / 720p");
             caps.Categories.AddCategoryMapping(34, NewznabStandardCategory.XXX, "XXX / 1080p");
+            caps.Categories.AddCategoryMapping(49, NewznabStandardCategory.XXX, "XXX / 2160p");
             caps.Categories.AddCategoryMapping(36, NewznabStandardCategory.MoviesOther, "Trailers");
             caps.Categories.AddCategoryMapping(37, NewznabStandardCategory.PC, "Software");
             caps.Categories.AddCategoryMapping(38, NewznabStandardCategory.Other, "Others");
@@ -145,35 +145,35 @@ namespace NzbDrone.Core.Indexers.Definitions
 
     public class HDSpaceRequestGenerator : IIndexerRequestGenerator
     {
-        public HDSpaceSettings Settings { get; set; }
+        public UserPassTorrentBaseSettings Settings { get; set; }
         public IndexerCapabilities Capabilities { get; set; }
-
-        public HDSpaceRequestGenerator()
-        {
-        }
 
         private IEnumerable<IndexerRequest> GetPagedRequests(string term, int[] categories, string imdb = null)
         {
-            var searchUrl = string.Format("{0}/index.php?page=torrents&", Settings.BaseUrl.TrimEnd('/'));
-
             var queryCollection = new NameValueCollection
             {
+                { "page", "torrents" },
                 { "active", "0" },
-                { "category", string.Join(";", Capabilities.Categories.MapTorznabCapsToTrackers(categories)) }
             };
 
-            if (imdb != null)
+            var catList = Capabilities.Categories.MapTorznabCapsToTrackers(categories);
+            if (catList.Any())
             {
-                queryCollection.Add("options", "2");
-                queryCollection.Add("search", imdb);
+                queryCollection.Set("category", string.Join(";", catList));
+            }
+
+            if (imdb.IsNotNullOrWhiteSpace())
+            {
+                queryCollection.Set("options", "2");
+                queryCollection.Set("search", imdb);
             }
             else
             {
-                queryCollection.Add("options", "0");
-                queryCollection.Add("search", term);
+                queryCollection.Set("options", "0");
+                queryCollection.Set("search", term.Replace(".", " "));
             }
 
-            searchUrl += queryCollection.GetQueryString();
+            var searchUrl = $"{Settings.BaseUrl.TrimEnd('/')}/index.php?{queryCollection.GetQueryString()}";
 
             var request = new IndexerRequest(searchUrl, HttpAccept.Html);
 
@@ -242,7 +242,7 @@ namespace NzbDrone.Core.Indexers.Definitions
 
             var resultParser = new HtmlParser();
             var searchResultDocument = resultParser.ParseDocument(indexerResponse.Content);
-            var rows = searchResultDocument.QuerySelectorAll("table.lista > tbody > tr");
+            var rows = searchResultDocument.QuerySelectorAll("div#bodyarea table.lista:not(:contains(\"Our Team Recommend\")) > tbody > tr:has(a[href^=\"index.php?page=torrent-details&id=\"])");
 
             foreach (var row in rows)
             {
@@ -253,57 +253,76 @@ namespace NzbDrone.Core.Indexers.Definitions
                     continue;
                 }
 
-                var release = new TorrentInfo();
-                release.MinimumRatio = 1;
-                release.MinimumSeedTime = 86400; // 24 hours
-
-                var qLink = row.Children[1].FirstElementChild;
-                release.Title = qLink.TextContent.Trim();
-                release.InfoUrl = _settings.BaseUrl + qLink.GetAttribute("href");
-                release.Guid = release.InfoUrl;
-
-                var imdbLink = row.Children[1].QuerySelector("a[href*=imdb]");
-                if (imdbLink != null)
-                {
-                    release.ImdbId = ParseUtil.GetImdbID(imdbLink.GetAttribute("href").Split('/').Last()).GetValueOrDefault();
-                }
-
-                var qDownload = row.Children[3].FirstElementChild;
-                release.DownloadUrl = _settings.BaseUrl + qDownload.GetAttribute("href");
-
-                var dateStr = row.Children[4].TextContent.Trim();
-
-                //"July 11, 2015, 13:34:09", "Today|Yesterday at 20:04:23"
-                release.PublishDate = DateTimeUtil.FromUnknown(dateStr);
-                var sizeStr = row.Children[5].TextContent;
-                release.Size = ParseUtil.GetBytes(sizeStr);
-                release.Seeders = ParseUtil.CoerceInt(row.Children[7].TextContent);
-                release.Peers = ParseUtil.CoerceInt(row.Children[8].TextContent) + release.Seeders;
-                var grabs = row.QuerySelector("td:nth-child(10)").TextContent;
-                grabs = grabs.Replace("---", "0");
-                release.Grabs = ParseUtil.CoerceInt(grabs);
+                var downloadVolumeFactor = 1.0;
 
                 if (row.QuerySelector("img[title=\"FreeLeech\"]") != null)
                 {
-                    release.DownloadVolumeFactor = 0;
+                    downloadVolumeFactor = 0;
                 }
                 else if (row.QuerySelector("img[src=\"images/sf.png\"]") != null)
                 {
-                    release.DownloadVolumeFactor = 0;
+                    downloadVolumeFactor = 0;
                 }
                 else if (row.QuerySelector("img[title=\"Half FreeLeech\"]") != null)
                 {
-                    release.DownloadVolumeFactor = 0.5;
-                }
-                else
-                {
-                    release.DownloadVolumeFactor = 1;
+                    downloadVolumeFactor = 0.5;
                 }
 
-                release.UploadVolumeFactor = 1;
-                var qCat = row.QuerySelector("a[href^=\"index.php?page=torrents&category=\"]");
-                var cat = qCat.GetAttribute("href").Split('=')[2];
+                // Skip non-freeleech results when freeleech only is set
+                if (_settings.FreeleechOnly && downloadVolumeFactor != 0.0)
+                {
+                    continue;
+                }
+
+                var release = new TorrentInfo
+                {
+                    DownloadVolumeFactor = downloadVolumeFactor,
+                    UploadVolumeFactor = 1,
+                    MinimumRatio = 1,
+                    MinimumSeedTime = 86400 // 24 hours
+                };
+
+                var qLink = row.QuerySelector("td:nth-child(2) a[href^=\"index.php?page=torrent-details&id=\"]");
+                release.Title = qLink?.TextContent.Trim();
+                release.InfoUrl = _settings.BaseUrl + qLink?.GetAttribute("href");
+                release.Guid = release.InfoUrl;
+
+                var downloadUrl = row.QuerySelector("td:nth-child(4) a[href^=\"download.php?id=\"]")?.GetAttribute("href");
+                release.DownloadUrl = _settings.BaseUrl + downloadUrl;
+
+                // Use the torrent filename as release title
+                var torrentTitle = ParseUtil.GetArgumentFromQueryString(downloadUrl, "f")?.Replace(".torrent", "").Trim();
+                if (torrentTitle.IsNotNullOrWhiteSpace())
+                {
+                    release.Title = WebUtility.HtmlDecode(torrentTitle);
+                }
+
+                var qGenres = row.QuerySelector("td:nth-child(2) span[style=\"color: #000000 \"]");
+                if (qGenres != null)
+                {
+                    var description = qGenres.TextContent.Split('\xA0').Last().Replace(" ", "");
+                    release.Description = description;
+                    release.Genres = description.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries).ToList();
+                }
+
+                var imdbLink = row.QuerySelector("td:nth-child(2) a[href*=imdb]");
+                if (imdbLink != null)
+                {
+                    release.ImdbId = ParseUtil.GetImdbId(imdbLink.GetAttribute("href").Split('/').Last()).GetValueOrDefault();
+                }
+
+                //"July 11, 2015, 13:34:09", "Today|Yesterday at 20:04:23"
+                release.PublishDate = DateTimeUtil.FromUnknown(row.QuerySelector("td:nth-child(5)")?.TextContent.Trim());
+                release.Size = ParseUtil.GetBytes(row.QuerySelector("td:nth-child(6)")?.TextContent.Trim());
+                release.Seeders = ParseUtil.CoerceInt(row.QuerySelector("td:nth-child(8)")?.TextContent);
+                release.Peers = ParseUtil.CoerceInt(row.QuerySelector("td:nth-child(9)")?.TextContent) + release.Seeders;
+                var grabs = row.QuerySelector("td:nth-child(10)")?.TextContent.Trim().Replace("---", "0");
+                release.Grabs = ParseUtil.CoerceInt(grabs);
+
+                var categoryLink = row.QuerySelector("a[href^=\"index.php?page=torrents&category=\"]").GetAttribute("href");
+                var cat = ParseUtil.GetArgumentFromQueryString(categoryLink, "category");
                 release.Categories = _categories.MapTrackerCatToNewznab(cat);
+
                 torrentInfos.Add(release);
             }
 
@@ -313,40 +332,9 @@ namespace NzbDrone.Core.Indexers.Definitions
         public Action<IDictionary<string, string>, DateTime?> CookiesUpdater { get; set; }
     }
 
-    public class HDSpaceSettingsValidator : AbstractValidator<HDSpaceSettings>
+    public class HDSpaceSettings : UserPassTorrentBaseSettings
     {
-        public HDSpaceSettingsValidator()
-        {
-            RuleFor(c => c.Username).NotEmpty();
-            RuleFor(c => c.Password).NotEmpty();
-        }
-    }
-
-    public class HDSpaceSettings : IIndexerSettings
-    {
-        private static readonly HDSpaceSettingsValidator Validator = new HDSpaceSettingsValidator();
-
-        public HDSpaceSettings()
-        {
-            Username = "";
-            Password = "";
-        }
-
-        [FieldDefinition(1, Label = "Base Url", Type = FieldType.Select, SelectOptionsProviderAction = "getUrls", HelpText = "Select which baseurl Prowlarr will use for requests to the site")]
-        public string BaseUrl { get; set; }
-
-        [FieldDefinition(2, Label = "Username", HelpText = "Site Username", Privacy = PrivacyLevel.UserName)]
-        public string Username { get; set; }
-
-        [FieldDefinition(3, Label = "Password", HelpText = "Site Password", Privacy = PrivacyLevel.Password, Type = FieldType.Password)]
-        public string Password { get; set; }
-
-        [FieldDefinition(4)]
-        public IndexerBaseSettings BaseSettings { get; set; } = new IndexerBaseSettings();
-
-        public NzbDroneValidationResult Validate()
-        {
-            return new NzbDroneValidationResult(Validator.Validate(this));
-        }
+        [FieldDefinition(4, Label = "Freeleech Only", Type = FieldType.Checkbox, HelpText = "Show freeleech releases only")]
+        public bool FreeleechOnly { get; set; } = false;
     }
 }

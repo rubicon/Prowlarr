@@ -1,10 +1,15 @@
 using NzbDrone.Core.Applications;
+using Swashbuckle.AspNetCore.Annotations;
 
-namespace Prowlarr.Api.V1.Application
+namespace Prowlarr.Api.V1.Applications
 {
     public class ApplicationResource : ProviderResource<ApplicationResource>
     {
         public ApplicationSyncLevel SyncLevel { get; set; }
+
+        [SwaggerIgnore]
+        public bool Enable { get; set; }
+
         public string TestCommand { get; set; }
     }
 
@@ -20,18 +25,19 @@ namespace Prowlarr.Api.V1.Application
             var resource = base.ToResource(definition);
 
             resource.SyncLevel = definition.SyncLevel;
+            resource.Enable = definition.Enable;
 
             return resource;
         }
 
-        public override ApplicationDefinition ToModel(ApplicationResource resource)
+        public override ApplicationDefinition ToModel(ApplicationResource resource, ApplicationDefinition existingDefinition)
         {
             if (resource == null)
             {
                 return default;
             }
 
-            var definition = base.ToModel(resource);
+            var definition = base.ToModel(resource, existingDefinition);
 
             definition.SyncLevel = resource.SyncLevel;
 

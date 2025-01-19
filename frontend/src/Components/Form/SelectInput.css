@@ -1,7 +1,14 @@
 .select {
+  @add-mixin truncate;
+
   composes: input from '~Components/Form/Input.css';
 
-  padding: 0 11px;
+  padding: 0 30px 0 11px;
+  background-image: none, linear-gradient(-135deg, transparent 50%, var(--inputBackgroundColor) 50%), linear-gradient(-225deg, transparent 50%, var(--inputBackgroundColor) 50%), linear-gradient(var(--inputBackgroundColor) 42%, var(--textColor) 42%);
+  background-position: right 30px center, right bottom, right bottom, right bottom;
+  background-size: 1px 100%, 35px 27px, 30px 35px, 30px 100%;
+  background-repeat: no-repeat;
+  appearance: none;
 }
 
 .hasError {

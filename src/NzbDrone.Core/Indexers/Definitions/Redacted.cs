@@ -1,20 +1,22 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Specialized;
 using System.Linq;
 using System.Net;
-using System.Text;
 using System.Threading.Tasks;
 using FluentValidation;
-using FluentValidation.Results;
 using NLog;
+using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
 using NzbDrone.Common.Serializer;
 using NzbDrone.Core.Annotations;
 using NzbDrone.Core.Configuration;
+using NzbDrone.Core.Indexers.Definitions.Gazelle;
 using NzbDrone.Core.Indexers.Exceptions;
-using NzbDrone.Core.Indexers.Gazelle;
+using NzbDrone.Core.Indexers.Settings;
 using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Messaging.Events;
+using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Validation;
 
@@ -23,23 +25,26 @@ namespace NzbDrone.Core.Indexers.Definitions
     public class Redacted : TorrentIndexerBase<RedactedSettings>
     {
         public override string Name => "Redacted";
-        public override string[] IndexerUrls => new string[] { "https://redacted.ch/" };
+        public override string[] IndexerUrls => new[] { "https://redacted.sh/" };
+        public override string[] LegacyUrls => new[] { "https://redacted.ch/" };
         public override string Description => "REDActed (Aka.PassTheHeadPhones) is one of the most well-known music trackers.";
-        public override string Language => "en-US";
-        public override Encoding Encoding => Encoding.UTF8;
-        public override DownloadProtocol Protocol => DownloadProtocol.Torrent;
         public override IndexerPrivacy Privacy => IndexerPrivacy.Private;
         public override IndexerCapabilities Capabilities => SetCapabilities();
         public override bool SupportsRedirect => true;
+        public override TimeSpan RateLimit => TimeSpan.FromSeconds(3);
 
-        public Redacted(IIndexerHttpClient httpClient, IEventAggregator eventAggregator, IIndexerStatusService indexerStatusService, IConfigService configService, Logger logger)
+        public Redacted(IIndexerHttpClient httpClient,
+                        IEventAggregator eventAggregator,
+                        IIndexerStatusService indexerStatusService,
+                        IConfigService configService,
+                        Logger logger)
             : base(httpClient, eventAggregator, indexerStatusService, configService, logger)
         {
         }
 
         public override IIndexerRequestGenerator GetRequestGenerator()
         {
-            return new RedactedRequestGenerator() { Settings = Settings, Capabilities = Capabilities, HttpClient = _httpClient };
+            return new RedactedRequestGenerator(Settings, Capabilities);
         }
 
         public override IParseIndexerResponse GetParser()
@@ -47,63 +52,121 @@ namespace NzbDrone.Core.Indexers.Definitions
             return new RedactedParser(Settings, Capabilities.Categories);
         }
 
+        protected override Task<HttpRequest> GetDownloadRequest(Uri link)
+        {
+            var requestBuilder = new HttpRequestBuilder(link.AbsoluteUri)
+            {
+                AllowAutoRedirect = FollowRedirect
+            };
+
+            var request = requestBuilder
+                .SetHeader("Authorization", Settings.Apikey)
+                .Build();
+
+            return Task.FromResult(request);
+        }
+
+        protected override IList<ReleaseInfo> CleanupReleases(IEnumerable<ReleaseInfo> releases, SearchCriteriaBase searchCriteria)
+        {
+            var cleanReleases = base.CleanupReleases(releases, searchCriteria);
+
+            if (searchCriteria.IsRssSearch)
+            {
+                cleanReleases = cleanReleases.Take(50).ToList();
+            }
+
+            return cleanReleases;
+        }
+
         private IndexerCapabilities SetCapabilities()
         {
             var caps = new IndexerCapabilities
             {
-                TvSearchParams = new List<TvSearchParam>
-                       {
-                           TvSearchParam.Q, TvSearchParam.Season, TvSearchParam.Ep
-                       },
-                MovieSearchParams = new List<MovieSearchParam>
-                       {
-                           MovieSearchParam.Q
-                       },
+                LimitsDefault = 50,
+                LimitsMax = 50,
                 MusicSearchParams = new List<MusicSearchParam>
-                       {
-                           MusicSearchParam.Q, MusicSearchParam.Album, MusicSearchParam.Artist, MusicSearchParam.Label, MusicSearchParam.Year
-                       },
+                {
+                    MusicSearchParam.Q, MusicSearchParam.Artist, MusicSearchParam.Album, MusicSearchParam.Year
+                },
                 BookSearchParams = new List<BookSearchParam>
-                       {
-                           BookSearchParam.Q
-                       }
+                {
+                    BookSearchParam.Q
+                }
             };
 
             caps.Categories.AddCategoryMapping(1, NewznabStandardCategory.Audio, "Music");
             caps.Categories.AddCategoryMapping(2, NewznabStandardCategory.PC, "Applications");
             caps.Categories.AddCategoryMapping(3, NewznabStandardCategory.BooksEBook, "E-Books");
             caps.Categories.AddCategoryMapping(4, NewznabStandardCategory.AudioAudiobook, "Audiobooks");
-            caps.Categories.AddCategoryMapping(5, NewznabStandardCategory.MoviesOther, "E-Learning Videos");
-            caps.Categories.AddCategoryMapping(6, NewznabStandardCategory.TVOther, "Comedy");
+            caps.Categories.AddCategoryMapping(5, NewznabStandardCategory.Other, "E-Learning Videos");
+            caps.Categories.AddCategoryMapping(6, NewznabStandardCategory.Other, "Comedy");
             caps.Categories.AddCategoryMapping(7, NewznabStandardCategory.BooksComics, "Comics");
 
             return caps;
         }
 
-        protected override async Task Test(List<ValidationFailure> failures)
+        public override async Task<IndexerDownloadResponse> Download(Uri link)
         {
-            ((RedactedRequestGenerator)GetRequestGenerator()).FetchPasskey();
-            await base.Test(failures);
+            var downloadResponse = await base.Download(link);
+
+            var fileData = downloadResponse.Data;
+
+            if (Settings.UseFreeleechToken == (int)RedactedFreeleechTokenAction.Preferred
+                && fileData.Length >= 1
+                && fileData[0] != 'd' // simple test for torrent vs HTML content
+                && link.Query.Contains("usetoken=1"))
+            {
+                var html = Encoding.GetString(fileData);
+
+                if (html.Contains("You do not have any freeleech tokens left.")
+                    || html.Contains("You do not have enough freeleech tokens")
+                    || html.Contains("This torrent is too large.")
+                    || html.Contains("You cannot use tokens here"))
+                {
+                    // Try to download again without usetoken
+                    downloadResponse = await base.Download(link.RemoveQueryParam("usetoken"));
+                }
+            }
+
+            return downloadResponse;
         }
     }
 
     public class RedactedRequestGenerator : IIndexerRequestGenerator
     {
-        public RedactedSettings Settings { get; set; }
-        public IndexerCapabilities Capabilities { get; set; }
+        private readonly RedactedSettings _settings;
+        private readonly IndexerCapabilities _capabilities;
+
         public Func<IDictionary<string, string>> GetCookies { get; set; }
         public Action<IDictionary<string, string>, DateTime?> CookiesUpdater { get; set; }
-        public IIndexerHttpClient HttpClient { get; set; }
 
-        public RedactedRequestGenerator()
+        public RedactedRequestGenerator(RedactedSettings settings, IndexerCapabilities capabilities)
         {
+            _settings = settings;
+            _capabilities = capabilities;
         }
 
         public IndexerPageableRequestChain GetSearchRequests(MusicSearchCriteria searchCriteria)
         {
             var pageableRequests = new IndexerPageableRequestChain();
+            var parameters = new NameValueCollection();
 
-            pageableRequests.Add(GetRequest(string.Format("&artistname={0}&groupname={1}", searchCriteria.Artist, searchCriteria.Album)));
+            if (searchCriteria.Artist.IsNotNullOrWhiteSpace() && searchCriteria.Artist != "VA")
+            {
+                parameters.Set("artistname", searchCriteria.Artist);
+            }
+
+            if (searchCriteria.Album.IsNotNullOrWhiteSpace())
+            {
+                parameters.Set("groupname", searchCriteria.Album);
+            }
+
+            if (searchCriteria.Year.HasValue)
+            {
+                parameters.Set("year", searchCriteria.Year.ToString());
+            }
+
+            pageableRequests.Add(GetPagedRequests(searchCriteria, parameters));
 
             return pageableRequests;
         }
@@ -111,8 +174,9 @@ namespace NzbDrone.Core.Indexers.Definitions
         public IndexerPageableRequestChain GetSearchRequests(BookSearchCriteria searchCriteria)
         {
             var pageableRequests = new IndexerPageableRequestChain();
+            var parameters = new NameValueCollection();
 
-            pageableRequests.Add(GetRequest(searchCriteria.SanitizedSearchTerm));
+            pageableRequests.Add(GetPagedRequests(searchCriteria, parameters));
 
             return pageableRequests;
         }
@@ -130,44 +194,44 @@ namespace NzbDrone.Core.Indexers.Definitions
         public IndexerPageableRequestChain GetSearchRequests(BasicSearchCriteria searchCriteria)
         {
             var pageableRequests = new IndexerPageableRequestChain();
+            var parameters = new NameValueCollection();
 
-            pageableRequests.Add(GetRequest(searchCriteria.SanitizedSearchTerm));
+            pageableRequests.Add(GetPagedRequests(searchCriteria, parameters));
 
             return pageableRequests;
         }
 
-        public void FetchPasskey()
+        private IEnumerable<IndexerRequest> GetPagedRequests(SearchCriteriaBase searchCriteria, NameValueCollection parameters)
         {
-            // GET on index for the passkey
-            var request = RequestBuilder().Resource("ajax.php?action=index").Build();
-            var indexResponse = HttpClient.Execute(request);
-            var index = Json.Deserialize<GazelleAuthResponse>(indexResponse.Content);
-            if (index == null ||
-                string.IsNullOrWhiteSpace(index.Status) ||
-                index.Status != "success" ||
-                string.IsNullOrWhiteSpace(index.Response.Passkey))
+            var term = searchCriteria.SanitizedSearchTerm.Trim();
+
+            parameters.Set("action", "browse");
+            parameters.Set("order_by", "time");
+            parameters.Set("order_way", "desc");
+
+            if (term.IsNotNullOrWhiteSpace())
             {
-                throw new Exception("Failed to authenticate with Redacted.");
+                parameters.Set("searchstr", term);
             }
 
-            // Set passkey on settings so it can be used to generate the download URL
-            Settings.Passkey = index.Response.Passkey;
-        }
+            var queryCats = _capabilities.Categories.MapTorznabCapsToTrackers(searchCriteria.Categories);
 
-        private IEnumerable<IndexerRequest> GetRequest(string searchParameters)
-        {
-            var req = RequestBuilder()
-                .Resource($"ajax.php?action=browse&searchstr={searchParameters}")
-                .Build();
+            if (queryCats.Any())
+            {
+                queryCats.ForEach(cat => parameters.Set($"filter_cat[{cat}]", "1"));
+            }
 
-            yield return new IndexerRequest(req);
-        }
+            if (_settings.FreeloadOnly)
+            {
+                parameters.Set("freetorrent", "4");
+            }
 
-        private HttpRequestBuilder RequestBuilder()
-        {
-            return new HttpRequestBuilder($"{Settings.BaseUrl.Trim().TrimEnd('/')}")
-                .Accept(HttpAccept.Json)
-                .SetHeader("Authorization", Settings.Apikey);
+            var searchUrl = _settings.BaseUrl.TrimEnd('/') + $"/ajax.php?{parameters.GetQueryString()}";
+
+            var request = new IndexerRequest(searchUrl, HttpAccept.Json);
+            request.HttpRequest.Headers.Set("Authorization", _settings.Apikey);
+
+            yield return request;
         }
     }
 
@@ -189,12 +253,14 @@ namespace NzbDrone.Core.Indexers.Definitions
 
             if (indexerResponse.HttpResponse.StatusCode != HttpStatusCode.OK)
             {
-                throw new IndexerException(indexerResponse, $"Unexpected response status {indexerResponse.HttpResponse.StatusCode} code from API request");
+                STJson.TryDeserialize<GazelleErrorResponse>(indexerResponse.Content, out var errorResponse);
+
+                throw new IndexerException(indexerResponse, $"Unexpected response status {indexerResponse.HttpResponse.StatusCode} code from indexer request: {errorResponse?.Error ?? "Check the logs for more information."}");
             }
 
             if (!indexerResponse.HttpResponse.Headers.ContentType.Contains(HttpAccept.Json.Value))
             {
-                throw new IndexerException(indexerResponse, $"Unexpected response header {indexerResponse.HttpResponse.Headers.ContentType} from API request, expected {HttpAccept.Json.Value}");
+                throw new IndexerException(indexerResponse, $"Unexpected response header {indexerResponse.HttpResponse.Headers.ContentType} from indexer request, expected {HttpAccept.Json.Value}");
             }
 
             var jsonResponse = new HttpResponse<GazelleResponse>(indexerResponse.HttpResponse);
@@ -211,35 +277,44 @@ namespace NzbDrone.Core.Indexers.Definitions
                 {
                     foreach (var torrent in result.Torrents)
                     {
-                        var id = torrent.TorrentId;
-                        var artist = WebUtility.HtmlDecode(result.Artist);
-                        var album = WebUtility.HtmlDecode(result.GroupName);
-
-                        var title = $"{result.Artist} - {result.GroupName} ({result.GroupYear}) [{torrent.Format} {torrent.Encoding}] [{torrent.Media}]";
-                        if (torrent.HasCue)
+                        // skip releases that cannot be used with freeleech tokens when the option is enabled
+                        if (_settings.UseFreeleechToken == (int)RedactedFreeleechTokenAction.Required && !torrent.CanUseToken)
                         {
-                            title += " [Cue]";
+                            continue;
                         }
 
-                        GazelleInfo release = new GazelleInfo()
+                        // skip non-freeload results when freeload only is set
+                        if (_settings.FreeloadOnly && !torrent.IsFreeload)
                         {
-                            Guid = string.Format("Redacted-{0}", id),
+                            continue;
+                        }
 
-                            // Splice Title from info to avoid calling API again for every torrent.
+                        var id = torrent.TorrentId;
+
+                        var title = GetTitle(result, torrent);
+                        var infoUrl = GetInfoUrl(result.GroupId, id);
+                        var isFreeLeech = torrent.IsFreeLeech || torrent.IsNeutralLeech || torrent.IsFreeload || torrent.IsPersonalFreeLeech;
+
+                        var release = new TorrentInfo
+                        {
+                            Guid = infoUrl,
+                            InfoUrl = infoUrl,
+                            DownloadUrl = GetDownloadUrl(id, torrent.CanUseToken && !isFreeLeech),
                             Title = WebUtility.HtmlDecode(title),
-
+                            Artist = WebUtility.HtmlDecode(result.Artist),
+                            Album = WebUtility.HtmlDecode(result.GroupName),
+                            Year = int.Parse(result.GroupYear),
                             Container = torrent.Encoding,
                             Codec = torrent.Format,
                             Size = long.Parse(torrent.Size),
-                            DownloadUrl = GetDownloadUrl(id, torrent.CanUseToken),
-                            InfoUrl = GetInfoUrl(result.GroupId, id),
                             Seeders = int.Parse(torrent.Seeders),
                             Peers = int.Parse(torrent.Leechers) + int.Parse(torrent.Seeders),
                             PublishDate = torrent.Time.ToUniversalTime(),
                             Scene = torrent.Scene,
-                            Freeleech = torrent.IsFreeLeech || torrent.IsPersonalFreeLeech,
                             Files = torrent.FileCount,
                             Grabs = torrent.Snatches,
+                            DownloadVolumeFactor = isFreeLeech ? 0 : 1,
+                            UploadVolumeFactor = torrent.IsNeutralLeech || torrent.IsFreeload ? 0 : 1
                         };
 
                         var category = torrent.Category;
@@ -259,20 +334,36 @@ namespace NzbDrone.Core.Indexers.Definitions
                 // Non-Audio files are formatted a little differently (1:1 for group and torrents)
                 else
                 {
-                    var id = result.TorrentId;
-                    GazelleInfo release = new GazelleInfo()
+                    // skip releases that cannot be used with freeleech tokens when the option is enabled
+                    if (_settings.UseFreeleechToken == (int)RedactedFreeleechTokenAction.Required && !result.CanUseToken)
                     {
-                        Guid = string.Format("Redacted-{0}", id),
+                        continue;
+                    }
+
+                    // skip non-freeload results when freeload only is set
+                    if (_settings.FreeloadOnly && !result.IsFreeload)
+                    {
+                        continue;
+                    }
+
+                    var id = result.TorrentId;
+                    var infoUrl = GetInfoUrl(result.GroupId, id);
+                    var isFreeLeech = result.IsFreeLeech || result.IsNeutralLeech || result.IsFreeload || result.IsPersonalFreeLeech;
+
+                    var release = new TorrentInfo
+                    {
+                        Guid = infoUrl,
+                        InfoUrl = infoUrl,
+                        DownloadUrl = GetDownloadUrl(id, result.CanUseToken && !isFreeLeech),
                         Title = WebUtility.HtmlDecode(result.GroupName),
                         Size = long.Parse(result.Size),
-                        DownloadUrl = GetDownloadUrl(id, result.CanUseToken),
-                        InfoUrl = GetInfoUrl(result.GroupId, id),
                         Seeders = int.Parse(result.Seeders),
                         Peers = int.Parse(result.Leechers) + int.Parse(result.Seeders),
-                        PublishDate = DateTimeOffset.FromUnixTimeSeconds(result.GroupTime).UtcDateTime,
-                        Freeleech = result.IsFreeLeech || result.IsPersonalFreeLeech,
+                        PublishDate = DateTimeOffset.FromUnixTimeSeconds(ParseUtil.CoerceLong(result.GroupTime)).UtcDateTime,
                         Files = result.FileCount,
                         Grabs = result.Snatches,
+                        DownloadVolumeFactor = isFreeLeech ? 0 : 1,
+                        UploadVolumeFactor = result.IsNeutralLeech || result.IsFreeload ? 0 : 1
                     };
 
                     var category = result.Category;
@@ -296,17 +387,50 @@ namespace NzbDrone.Core.Indexers.Definitions
                     .ToArray();
         }
 
+        private string GetTitle(GazelleRelease result, GazelleTorrent torrent)
+        {
+            var title = $"{result.Artist} - {result.GroupName} ({result.GroupYear})";
+
+            if (result.ReleaseType.IsNotNullOrWhiteSpace() && result.ReleaseType != "Unknown")
+            {
+                title += " [" + result.ReleaseType + "]";
+            }
+
+            if (torrent.RemasterTitle.IsNotNullOrWhiteSpace())
+            {
+                title += $" [{$"{torrent.RemasterTitle} {torrent.RemasterYear}".Trim()}]";
+            }
+
+            var flags = new List<string>
+            {
+                $"{torrent.Format} {torrent.Encoding}",
+                $"{torrent.Media}"
+            };
+
+            if (torrent.HasLog)
+            {
+                flags.Add("Log (" + torrent.LogScore + "%)");
+            }
+
+            if (torrent.HasCue)
+            {
+                flags.Add("Cue");
+            }
+
+            return $"{title} [{string.Join(" / ", flags)}]";
+        }
+
         private string GetDownloadUrl(int torrentId, bool canUseToken)
         {
-            // AuthKey is required but not checked, just pass in a dummy variable
-            // to avoid having to track authkey, which is randomly cycled
             var url = new HttpUri(_settings.BaseUrl)
-                .CombinePath("/torrents.php")
+                .CombinePath("/ajax.php")
                 .AddQueryParam("action", "download")
-                .AddQueryParam("id", torrentId)
-                .AddQueryParam("authkey", "prowlarr")
-                .AddQueryParam("torrent_pass", _settings.Passkey)
-                .AddQueryParam("usetoken", (_settings.UseFreeleechToken && canUseToken) ? 1 : 0);
+                .AddQueryParam("id", torrentId);
+
+            if (_settings.UseFreeleechToken is (int)RedactedFreeleechTokenAction.Preferred or (int)RedactedFreeleechTokenAction.Required && canUseToken)
+            {
+                url = url.AddQueryParam("usetoken", "1");
+            }
 
             return url.FullUri;
         }
@@ -322,7 +446,7 @@ namespace NzbDrone.Core.Indexers.Definitions
         }
     }
 
-    public class RedactedSettingsValidator : AbstractValidator<RedactedSettings>
+    public class RedactedSettingsValidator : NoAuthSettingsValidator<RedactedSettings>
     {
         public RedactedSettingsValidator()
         {
@@ -330,34 +454,40 @@ namespace NzbDrone.Core.Indexers.Definitions
         }
     }
 
-    public class RedactedSettings : IIndexerSettings
+    public class RedactedSettings : NoAuthTorrentBaseSettings
     {
-        private static readonly RedactedSettingsValidator Validator = new RedactedSettingsValidator();
+        private static readonly RedactedSettingsValidator Validator = new ();
 
         public RedactedSettings()
         {
             Apikey = "";
-            Passkey = "";
-            UseFreeleechToken = false;
+            UseFreeleechToken = (int)RedactedFreeleechTokenAction.Never;
         }
 
-        [FieldDefinition(1, Label = "Base Url", Type = FieldType.Select, SelectOptionsProviderAction = "getUrls", HelpText = "Select which baseurl Prowlarr will use for requests to the site")]
-        public string BaseUrl { get; set; }
-
-        [FieldDefinition(2, Label = "API Key", HelpText = "API Key from the Site (Found in Settings => Access Settings)", Privacy = PrivacyLevel.ApiKey)]
+        [FieldDefinition(2, Label = "ApiKey", Privacy = PrivacyLevel.ApiKey, HelpText = "IndexerRedactedSettingsApiKeyHelpText")]
         public string Apikey { get; set; }
 
-        [FieldDefinition(3, Label = "Use Freeleech Tokens", HelpText = "Use freeleech tokens when available", Type = FieldType.Checkbox)]
-        public bool UseFreeleechToken { get; set; }
+        [FieldDefinition(3, Type = FieldType.Select, Label = "Use Freeleech Tokens", SelectOptions = typeof(RedactedFreeleechTokenAction), HelpText = "When to use freeleech tokens")]
+        public int UseFreeleechToken { get; set; }
 
-        [FieldDefinition(4)]
-        public IndexerBaseSettings BaseSettings { get; set; } = new IndexerBaseSettings();
+        [FieldDefinition(4, Label = "Freeload Only", Type = FieldType.Checkbox, Advanced = true, HelpTextWarning = "Search freeload torrents only. End date: 31 January 2024, 23:59 UTC.")]
+        public bool FreeloadOnly { get; set; }
 
-        public string Passkey { get; set; }
-
-        public NzbDroneValidationResult Validate()
+        public override NzbDroneValidationResult Validate()
         {
             return new NzbDroneValidationResult(Validator.Validate(this));
         }
+    }
+
+    public enum RedactedFreeleechTokenAction
+    {
+        [FieldOption(Label = "Never", Hint = "Do not use tokens")]
+        Never = 0,
+
+        [FieldOption(Label = "Preferred", Hint = "Use token if possible")]
+        Preferred = 1,
+
+        [FieldOption(Label = "Required", Hint = "Abort download if unable to use token")]
+        Required = 2,
     }
 }

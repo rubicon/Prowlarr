@@ -4,33 +4,36 @@ using System.Collections.Specialized;
 using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
-using FluentValidation;
 using Newtonsoft.Json;
 using NLog;
+using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
-using NzbDrone.Core.Annotations;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Indexers.Exceptions;
+using NzbDrone.Core.Indexers.Settings;
 using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
-using NzbDrone.Core.Validation;
 
 namespace NzbDrone.Core.Indexers.Definitions
 {
-    public class SubsPlease : TorrentIndexerBase<SubsPleaseSettings>
+    public class SubsPlease : TorrentIndexerBase<NoAuthTorrentBaseSettings>
     {
         public override string Name => "SubsPlease";
         public override string[] IndexerUrls => new[]
         {
             "https://subsplease.org/",
+            "https://subsplease.mrunblock.bond/",
+            "https://subsplease.nocensor.click/"
+        };
+        public override string[] LegacyUrls => new[]
+        {
             "https://subsplease.nocensor.space/"
         };
         public override string Language => "en-US";
         public override string Description => "SubsPlease - A better HorribleSubs/Erai replacement";
         public override Encoding Encoding => Encoding.UTF8;
-        public override DownloadProtocol Protocol => DownloadProtocol.Torrent;
         public override IndexerPrivacy Privacy => IndexerPrivacy.Public;
         public override IndexerCapabilities Capabilities => SetCapabilities();
 
@@ -41,12 +44,12 @@ namespace NzbDrone.Core.Indexers.Definitions
 
         public override IIndexerRequestGenerator GetRequestGenerator()
         {
-            return new SubsPleaseRequestGenerator() { Settings = Settings, Capabilities = Capabilities };
+            return new SubsPleaseRequestGenerator(Settings);
         }
 
         public override IParseIndexerResponse GetParser()
         {
-            return new SubsPleaseParser(Settings, Capabilities.Categories);
+            return new SubsPleaseParser(Settings);
         }
 
         private IndexerCapabilities SetCapabilities()
@@ -54,12 +57,17 @@ namespace NzbDrone.Core.Indexers.Definitions
             var caps = new IndexerCapabilities
             {
                 TvSearchParams = new List<TvSearchParam>
-                                   {
-                                       TvSearchParam.Q, TvSearchParam.Season, TvSearchParam.Ep
-                                   },
+                {
+                    TvSearchParam.Q, TvSearchParam.Season, TvSearchParam.Ep
+                },
+                MovieSearchParams = new List<MovieSearchParam>
+                {
+                    MovieSearchParam.Q
+                }
             };
 
-            caps.Categories.AddCategoryMapping(1, NewznabStandardCategory.TVAnime, "Anime");
+            caps.Categories.AddCategoryMapping(1, NewznabStandardCategory.TVAnime);
+            caps.Categories.AddCategoryMapping(2, NewznabStandardCategory.MoviesOther);
 
             return caps;
         }
@@ -67,90 +75,95 @@ namespace NzbDrone.Core.Indexers.Definitions
 
     public class SubsPleaseRequestGenerator : IIndexerRequestGenerator
     {
-        public SubsPleaseSettings Settings { get; set; }
-        public IndexerCapabilities Capabilities { get; set; }
+        private static readonly Regex ResolutionRegex = new (@"\d{3,4}p", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-        private IEnumerable<IndexerRequest> GetSearchRequests(string term)
+        private readonly NoAuthTorrentBaseSettings _settings;
+
+        public SubsPleaseRequestGenerator(NoAuthTorrentBaseSettings settings)
         {
-            var searchUrl = $"{Settings.BaseUrl.TrimEnd('/')}/api/?";
-
-            var searchTerm = Regex.Replace(term, "\\[?SubsPlease\\]?\\s*", string.Empty, RegexOptions.IgnoreCase).Trim();
-
-            // If the search terms contain a resolution, remove it from the query sent to the API
-            var resMatch = Regex.Match(searchTerm, "\\d{3,4}[p|P]");
-            if (resMatch.Success)
-            {
-                searchTerm = searchTerm.Replace(resMatch.Value, string.Empty);
-            }
-
-            var queryParameters = new NameValueCollection
-            {
-                { "f", "search" },
-                { "tz", "UTC" },
-                { "s", searchTerm }
-            };
-
-            var request = new IndexerRequest(searchUrl + queryParameters.GetQueryString(), HttpAccept.Json);
-
-            yield return request;
-        }
-
-        private IEnumerable<IndexerRequest> GetRssRequest()
-        {
-            var searchUrl = $"{Settings.BaseUrl.TrimEnd('/')}/api/?";
-
-            var queryParameters = new NameValueCollection
-            {
-                { "f", "latest" },
-                { "tz", "UTC" }
-            };
-
-            var request = new IndexerRequest(searchUrl + queryParameters.GetQueryString(), HttpAccept.Json);
-
-            yield return request;
+            _settings = settings;
         }
 
         public IndexerPageableRequestChain GetSearchRequests(MovieSearchCriteria searchCriteria)
         {
             var pageableRequests = new IndexerPageableRequestChain();
 
+            pageableRequests.Add(GetSearchRequests(searchCriteria.SanitizedSearchTerm, searchCriteria));
+
             return pageableRequests;
         }
 
         public IndexerPageableRequestChain GetSearchRequests(MusicSearchCriteria searchCriteria)
         {
-            var pageableRequests = new IndexerPageableRequestChain();
-
-            return pageableRequests;
+            return new IndexerPageableRequestChain();
         }
 
         public IndexerPageableRequestChain GetSearchRequests(TvSearchCriteria searchCriteria)
         {
             var pageableRequests = new IndexerPageableRequestChain();
 
-            pageableRequests.Add(searchCriteria.RssSearch
-                ? GetRssRequest()
-                : GetSearchRequests(searchCriteria.SanitizedTvSearchString));
+            var searchTerm = searchCriteria.SanitizedSearchTerm.Trim();
+
+            // Only include season > 1 in searchTerm, format as S2 rather than S02
+            if (searchCriteria.Season is > 1)
+            {
+                searchTerm += $" S{searchCriteria.Season}";
+            }
+
+            if (int.TryParse(searchCriteria.Episode, out var episode) && episode > 0)
+            {
+                searchTerm += $" {episode:00}";
+            }
+
+            pageableRequests.Add(GetSearchRequests(searchTerm, searchCriteria));
 
             return pageableRequests;
         }
 
         public IndexerPageableRequestChain GetSearchRequests(BookSearchCriteria searchCriteria)
         {
-            var pageableRequests = new IndexerPageableRequestChain();
-
-            return pageableRequests;
+            return new IndexerPageableRequestChain();
         }
 
         public IndexerPageableRequestChain GetSearchRequests(BasicSearchCriteria searchCriteria)
         {
             var pageableRequests = new IndexerPageableRequestChain();
 
-            pageableRequests.Add(searchCriteria.RssSearch
-                ? GetRssRequest()
-                : GetSearchRequests(searchCriteria.SanitizedSearchTerm));
+            pageableRequests.Add(GetSearchRequests(searchCriteria.SanitizedSearchTerm, searchCriteria));
 
             return pageableRequests;
+        }
+
+        private IEnumerable<IndexerRequest> GetSearchRequests(string term, SearchCriteriaBase searchCriteria)
+        {
+            var queryParameters = new NameValueCollection
+            {
+                { "tz", "UTC" }
+            };
+
+            if (searchCriteria.IsRssSearch)
+            {
+                queryParameters.Set("f", "latest");
+            }
+            else
+            {
+                var searchTerm = Regex.Replace(term, "\\[?SubsPlease\\]?\\s*", string.Empty, RegexOptions.IgnoreCase).Trim();
+
+                // If the search terms contain a resolution, remove it from the query sent to the API
+                var resolutionMatch = ResolutionRegex.Match(searchTerm);
+
+                if (resolutionMatch.Success)
+                {
+                    searchTerm = searchTerm.Replace(resolutionMatch.Value, string.Empty).Trim();
+                }
+
+                queryParameters.Set("f", "search");
+                queryParameters.Set("s", searchTerm);
+            }
+
+            var searchUrl = $"{_settings.BaseUrl.TrimEnd('/')}/api/?{queryParameters.GetQueryString()}";
+
+            yield return new IndexerRequest(searchUrl, HttpAccept.Json);
         }
 
         public Func<IDictionary<string, string>> GetCookies { get; set; }
@@ -159,13 +172,13 @@ namespace NzbDrone.Core.Indexers.Definitions
 
     public class SubsPleaseParser : IParseIndexerResponse
     {
-        private readonly SubsPleaseSettings _settings;
-        private readonly IndexerCapabilitiesCategories _categories;
+        private static readonly Regex RegexSize = new (@"\&xl=(?<size>\d+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-        public SubsPleaseParser(SubsPleaseSettings settings, IndexerCapabilitiesCategories categories)
+        private readonly NoAuthTorrentBaseSettings _settings;
+
+        public SubsPleaseParser(NoAuthTorrentBaseSettings settings)
         {
             _settings = settings;
-            _categories = categories;
         }
 
         public IList<ReleaseInfo> ParseResponse(IndexerResponse indexerResponse)
@@ -174,7 +187,7 @@ namespace NzbDrone.Core.Indexers.Definitions
 
             if (indexerResponse.HttpResponse.StatusCode != HttpStatusCode.OK)
             {
-                throw new IndexerException(indexerResponse, $"Unexpected response status {indexerResponse.HttpResponse.StatusCode} code from API request");
+                throw new IndexerException(indexerResponse, $"Unexpected response status {indexerResponse.HttpResponse.StatusCode} code from indexer request");
             }
 
             // When there are no results, the API returns an empty array or empty response instead of an object
@@ -191,7 +204,7 @@ namespace NzbDrone.Core.Indexers.Definitions
                 {
                     var release = new TorrentInfo
                     {
-                        InfoUrl = _settings.BaseUrl + $"shows/{value.Page}/",
+                        InfoUrl = $"{_settings.BaseUrl}shows/{value.Page}/",
                         PublishDate = value.ReleaseDate.LocalDateTime,
                         Files = 1,
                         Categories = new List<IndexerCategory> { NewznabStandardCategory.TVAnime },
@@ -203,29 +216,22 @@ namespace NzbDrone.Core.Indexers.Definitions
                         UploadVolumeFactor = 1
                     };
 
+                    if (value.ImageUrl.IsNotNullOrWhiteSpace())
+                    {
+                        release.PosterUrl = _settings.BaseUrl + value.ImageUrl.TrimStart('/');
+                    }
+
+                    if (value.Episode.ToLowerInvariant() == "movie")
+                    {
+                        release.Categories.Add(NewznabStandardCategory.MoviesOther);
+                    }
+
                     // Ex: [SubsPlease] Shingeki no Kyojin (The Final Season) - 64 (1080p)
-                    release.Title += $"[SubsPlease] {value.Show} - {value.Episode} ({d.Res}p)";
+                    release.Title = $"[SubsPlease] {value.Show} - {value.Episode} ({d.Resolution}p)";
                     release.MagnetUrl = d.Magnet;
                     release.DownloadUrl = null;
                     release.Guid = d.Magnet;
-
-                    // The API doesn't tell us file size, so give an estimate based on resolution
-                    if (string.Equals(d.Res, "1080"))
-                    {
-                        release.Size = 1395864371; // 1.3GB
-                    }
-                    else if (string.Equals(d.Res, "720"))
-                    {
-                        release.Size = 734003200; // 700MB
-                    }
-                    else if (string.Equals(d.Res, "480"))
-                    {
-                        release.Size = 367001600; // 350MB
-                    }
-                    else
-                    {
-                        release.Size = 1073741824; // 1GB
-                    }
+                    release.Size = GetReleaseSize(d);
 
                     torrentInfos.Add(release);
                 }
@@ -234,27 +240,31 @@ namespace NzbDrone.Core.Indexers.Definitions
             return torrentInfos.ToArray();
         }
 
-        public Action<IDictionary<string, string>, DateTime?> CookiesUpdater { get; set; }
-    }
-
-    public class SubsPleaseSettingsValidator : AbstractValidator<SubsPleaseSettings>
-    {
-    }
-
-    public class SubsPleaseSettings : IIndexerSettings
-    {
-        private static readonly SubsPleaseSettingsValidator Validator = new SubsPleaseSettingsValidator();
-
-        [FieldDefinition(1, Label = "Base Url", Type = FieldType.Select, SelectOptionsProviderAction = "getUrls", HelpText = "Select which baseurl Prowlarr will use for requests to the site")]
-        public string BaseUrl { get; set; }
-
-        [FieldDefinition(2)]
-        public IndexerBaseSettings BaseSettings { get; set; } = new IndexerBaseSettings();
-
-        public NzbDroneValidationResult Validate()
+        private static long GetReleaseSize(SubPleaseDownloadInfo info)
         {
-            return new NzbDroneValidationResult(Validator.Validate(this));
+            if (info.Magnet.IsNotNullOrWhiteSpace())
+            {
+                var sizeMatch = RegexSize.Match(info.Magnet);
+
+                if (sizeMatch.Success &&
+                    long.TryParse(sizeMatch.Groups["size"].Value, out var releaseSize)
+                    && releaseSize > 0)
+                {
+                    return releaseSize;
+                }
+            }
+
+            // The API doesn't tell us file size, so give an estimate based on resolution
+            return info.Resolution switch
+            {
+                "1080" => 1.3.Gigabytes(),
+                "720" => 700.Megabytes(),
+                "480" => 350.Megabytes(),
+                _ => 1.Gigabytes()
+            };
         }
+
+        public Action<IDictionary<string, string>, DateTime?> CookiesUpdater { get; set; }
     }
 
     public class SubPleaseRelease
@@ -267,13 +277,16 @@ namespace NzbDrone.Core.Indexers.Definitions
         public string Episode { get; set; }
         public SubPleaseDownloadInfo[] Downloads { get; set; }
         public string Xdcc { get; set; }
+
+        [JsonProperty("image_url")]
         public string ImageUrl { get; set; }
         public string Page { get; set; }
     }
 
     public class SubPleaseDownloadInfo
     {
-        public string Res { get; set; }
+        [JsonProperty("res")]
+        public string Resolution { get; set; }
         public string Magnet { get; set; }
     }
 }

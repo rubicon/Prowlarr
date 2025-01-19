@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Net;
+using System.Net.Sockets;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -130,7 +131,7 @@ namespace NzbDrone.Common.Extensions
 
         public static string WrapInQuotes(this string text)
         {
-            if (!text.Contains(" "))
+            if (!text.Contains(' '))
             {
                 return text;
             }
@@ -197,18 +198,77 @@ namespace NzbDrone.Common.Extensions
 
         public static string CleanFileName(this string name)
         {
-            string result = name;
+            var result = name;
             string[] badCharacters = { "\\", "/", "<", ">", "?", "*", ":", "|", "\"" };
             string[] goodCharacters = { "+", "+", "", "", "!", "-", "-", "", "" };
 
             result = result.Replace(": ", " - ");
 
-            for (int i = 0; i < badCharacters.Length; i++)
+            for (var i = 0; i < badCharacters.Length; i++)
             {
                 result = result.Replace(badCharacters[i], goodCharacters[i]);
             }
 
             return result.TrimStart(' ', '.').TrimEnd(' ');
+        }
+
+        public static string EncodeRFC3986(this string value)
+        {
+            // From Twitterizer http://www.twitterizer.net/
+            if (string.IsNullOrEmpty(value))
+            {
+                return string.Empty;
+            }
+
+            var encoded = Uri.EscapeDataString(value);
+
+            return Regex
+                .Replace(encoded, "(%[0-9a-f][0-9a-f])", c => c.Value.ToUpper())
+                .Replace("(", "%28")
+                .Replace(")", "%29")
+                .Replace("$", "%24")
+                .Replace("!", "%21")
+                .Replace("*", "%2A")
+                .Replace("'", "%27")
+                .Replace("%7E", "~");
+        }
+
+        public static bool IsValidIpAddress(this string value)
+        {
+            if (!IPAddress.TryParse(value, out var parsedAddress))
+            {
+                return false;
+            }
+
+            if (parsedAddress.Equals(IPAddress.Parse("255.255.255.255")))
+            {
+                return false;
+            }
+
+            if (parsedAddress.IsIPv6Multicast)
+            {
+                return false;
+            }
+
+            return parsedAddress.AddressFamily == AddressFamily.InterNetwork || parsedAddress.AddressFamily == AddressFamily.InterNetworkV6;
+        }
+
+        public static string ToUrlHost(this string input)
+        {
+            return input.Contains(':') ? $"[{input}]" : input;
+        }
+
+        public static bool IsAllDigits(this string input)
+        {
+            foreach (var c in input)
+            {
+                if (c < '0' || c > '9')
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
     }
 }

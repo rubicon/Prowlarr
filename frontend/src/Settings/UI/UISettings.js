@@ -1,5 +1,6 @@
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
+import Alert from 'Components/Alert';
 import FieldSet from 'Components/FieldSet';
 import Form from 'Components/Form/Form';
 import FormGroup from 'Components/Form/FormGroup';
@@ -8,8 +9,10 @@ import FormLabel from 'Components/Form/FormLabel';
 import LoadingIndicator from 'Components/Loading/LoadingIndicator';
 import PageContent from 'Components/Page/PageContent';
 import PageContentBody from 'Components/Page/PageContentBody';
-import { inputTypes } from 'Helpers/Props';
+import { inputTypes, kinds } from 'Helpers/Props';
 import SettingsToolbarConnector from 'Settings/SettingsToolbarConnector';
+import themes from 'Styles/Themes';
+import titleCase from 'Utilities/String/titleCase';
 import translate from 'Utilities/String/translate';
 
 export const firstDayOfWeekOptions = [
@@ -18,19 +21,19 @@ export const firstDayOfWeekOptions = [
 ];
 
 export const weekColumnOptions = [
-  { key: 'ddd M/D', value: 'Tue 3/25' },
-  { key: 'ddd MM/DD', value: 'Tue 03/25' },
-  { key: 'ddd D/M', value: 'Tue 25/3' },
-  { key: 'ddd DD/MM', value: 'Tue 25/03' }
+  { key: 'ddd M/D', value: 'Tue 3/25', hint: 'ddd M/D' },
+  { key: 'ddd MM/DD', value: 'Tue 03/25', hint: 'ddd MM/DD' },
+  { key: 'ddd D/M', value: 'Tue 25/3', hint: 'ddd D/M' },
+  { key: 'ddd DD/MM', value: 'Tue 25/03', hint: 'ddd DD/MM' }
 ];
 
 const shortDateFormatOptions = [
-  { key: 'MMM D YYYY', value: 'Mar 25 2014' },
-  { key: 'DD MMM YYYY', value: '25 Mar 2014' },
-  { key: 'MM/D/YYYY', value: '03/25/2014' },
-  { key: 'MM/DD/YYYY', value: '03/25/2014' },
-  { key: 'DD/MM/YYYY', value: '25/03/2014' },
-  { key: 'YYYY-MM-DD', value: '2014-03-25' }
+  { key: 'MMM D YYYY', value: 'Mar 25 2014', hint: 'MMM D YYYY' },
+  { key: 'DD MMM YYYY', value: '25 Mar 2014', hint: 'DD MMM YYYY' },
+  { key: 'MM/D/YYYY', value: '03/25/2014', hint: 'MM/D/YYYY' },
+  { key: 'MM/DD/YYYY', value: '03/25/2014', hint: 'MM/DD/YYYY' },
+  { key: 'DD/MM/YYYY', value: '25/03/2014', hint: 'DD/MM/YYYY' },
+  { key: 'YYYY-MM-DD', value: '2014-03-25', hint: 'YYYY-MM-DD' }
 ];
 
 const longDateFormatOptions = [
@@ -60,7 +63,8 @@ class UISettings extends Component {
       ...otherProps
     } = this.props;
 
-    const uiLanguages = languages.filter((item) => item.value !== 'Original');
+    const themeOptions = Object.keys(themes)
+      .map((theme) => ({ key: theme, value: titleCase(theme) }));
 
     return (
       <PageContent title={translate('UISettings')}>
@@ -77,9 +81,9 @@ class UISettings extends Component {
 
           {
             !isFetching && error &&
-              <div>
+              <Alert kind={kinds.DANGER}>
                 {translate('UnableToLoadUISettings')}
-              </div>
+              </Alert>
           }
 
           {
@@ -139,6 +143,17 @@ class UISettings extends Component {
 
                 <FieldSet legend={translate('Style')}>
                   <FormGroup>
+                    <FormLabel>{translate('Theme')}</FormLabel>
+                    <FormInputGroup
+                      type={inputTypes.SELECT}
+                      name="theme"
+                      helpText={translate('ThemeHelpText', { inspiredBy: 'Theme.Park' })}
+                      values={themeOptions}
+                      onChange={onInputChange}
+                      {...settings.theme}
+                    />
+                  </FormGroup>
+                  <FormGroup>
                     <FormLabel>{translate('SettingsEnableColorImpairedMode')}</FormLabel>
                     <FormInputGroup
                       type={inputTypes.CHECK}
@@ -156,11 +171,18 @@ class UISettings extends Component {
                     <FormInputGroup
                       type={inputTypes.SELECT}
                       name="uiLanguage"
-                      values={uiLanguages}
+                      values={languages}
                       helpText={translate('UILanguageHelpText')}
                       helpTextWarning={translate('UILanguageHelpTextWarning')}
                       onChange={onInputChange}
                       {...settings.uiLanguage}
+                      errors={
+                        languages.some((language) => language.key === settings.uiLanguage.value) ?
+                          settings.uiLanguage.errors :
+                          [
+                            ...settings.uiLanguage.errors,
+                            { message: translate('InvalidUILanguage') }
+                          ]}
                     />
                   </FormGroup>
                 </FieldSet>

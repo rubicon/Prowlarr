@@ -1,76 +1,479 @@
+using System;
 using System.Collections.Generic;
+using System.Collections.Specialized;
+using System.Linq;
+using System.Net;
+using System.Threading.Tasks;
+using FluentValidation;
 using NLog;
+using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
+using NzbDrone.Common.Serializer;
+using NzbDrone.Core.Annotations;
 using NzbDrone.Core.Configuration;
-using NzbDrone.Core.Indexers.Gazelle;
+using NzbDrone.Core.Indexers.Definitions.Gazelle;
+using NzbDrone.Core.Indexers.Exceptions;
+using NzbDrone.Core.Indexers.Settings;
+using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Messaging.Events;
+using NzbDrone.Core.Parser;
+using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.Validation;
 
 namespace NzbDrone.Core.Indexers.Definitions
 {
-    public class Orpheus : Gazelle.Gazelle
+    public class Orpheus : TorrentIndexerBase<OrpheusSettings>
     {
         public override string Name => "Orpheus";
-        public override string[] IndexerUrls => new string[] { "https://orpheus.network/" };
+        public override string[] IndexerUrls => new[] { "https://orpheus.network/" };
         public override string Description => "Orpheus (APOLLO) is a Private Torrent Tracker for MUSIC";
         public override IndexerPrivacy Privacy => IndexerPrivacy.Private;
+        public override IndexerCapabilities Capabilities => SetCapabilities();
+        public override bool SupportsRedirect => true;
+        public override TimeSpan RateLimit => TimeSpan.FromSeconds(3);
 
-        public Orpheus(IIndexerHttpClient httpClient, IEventAggregator eventAggregator, IIndexerStatusService indexerStatusService, IConfigService configService, Logger logger)
+        public Orpheus(IIndexerHttpClient httpClient,
+                       IEventAggregator eventAggregator,
+                       IIndexerStatusService indexerStatusService,
+                       IConfigService configService,
+                       Logger logger)
             : base(httpClient, eventAggregator, indexerStatusService, configService, logger)
         {
         }
 
-        protected override IndexerCapabilities SetCapabilities()
+        public override IIndexerRequestGenerator GetRequestGenerator()
         {
-            var caps = new IndexerCapabilities
-            {
-                MusicSearchParams = new List<MusicSearchParam>
-                       {
-                           MusicSearchParam.Q, MusicSearchParam.Album, MusicSearchParam.Artist, MusicSearchParam.Label, MusicSearchParam.Year
-                       },
-                BookSearchParams = new List<BookSearchParam>
-                       {
-                           BookSearchParam.Q
-                       }
-            };
-
-            caps.Categories.AddCategoryMapping(1, NewznabStandardCategory.Audio, "Music");
-            caps.Categories.AddCategoryMapping(2, NewznabStandardCategory.PC, "Applications");
-            caps.Categories.AddCategoryMapping(3, NewznabStandardCategory.Books, "E-Books");
-            caps.Categories.AddCategoryMapping(4, NewznabStandardCategory.AudioAudiobook, "Audiobooks");
-            caps.Categories.AddCategoryMapping(5, NewznabStandardCategory.Other, "E-Learning Videos");
-            caps.Categories.AddCategoryMapping(6, NewznabStandardCategory.Other, "Comedy");
-            caps.Categories.AddCategoryMapping(7, NewznabStandardCategory.Books, "Comics");
-
-            return caps;
+            return new OrpheusRequestGenerator(Settings, Capabilities);
         }
 
         public override IParseIndexerResponse GetParser()
         {
-            return new OrpheusParser(Settings, Capabilities);
+            return new OrpheusParser(Settings, Capabilities.Categories);
+        }
+
+        protected override Task<HttpRequest> GetDownloadRequest(Uri link)
+        {
+            var requestBuilder = new HttpRequestBuilder(link.AbsoluteUri)
+            {
+                AllowAutoRedirect = FollowRedirect
+            };
+
+            var request = requestBuilder
+                .SetHeader("Authorization", $"token {Settings.Apikey}")
+                .Build();
+
+            return Task.FromResult(request);
+        }
+
+        protected override IList<ReleaseInfo> CleanupReleases(IEnumerable<ReleaseInfo> releases, SearchCriteriaBase searchCriteria)
+        {
+            var cleanReleases = base.CleanupReleases(releases, searchCriteria);
+
+            if (searchCriteria.IsRssSearch)
+            {
+                cleanReleases = cleanReleases.Take(50).ToList();
+            }
+
+            return cleanReleases;
+        }
+
+        private IndexerCapabilities SetCapabilities()
+        {
+            var caps = new IndexerCapabilities
+            {
+                LimitsDefault = 50,
+                LimitsMax = 50,
+                MusicSearchParams = new List<MusicSearchParam>
+                {
+                    MusicSearchParam.Q, MusicSearchParam.Artist, MusicSearchParam.Album, MusicSearchParam.Year
+                },
+                BookSearchParams = new List<BookSearchParam>
+                {
+                    BookSearchParam.Q
+                }
+            };
+
+            caps.Categories.AddCategoryMapping(1, NewznabStandardCategory.Audio, "Music");
+            caps.Categories.AddCategoryMapping(2, NewznabStandardCategory.PC, "Applications");
+            caps.Categories.AddCategoryMapping(3, NewznabStandardCategory.BooksEBook, "E-Books");
+            caps.Categories.AddCategoryMapping(4, NewznabStandardCategory.AudioAudiobook, "Audiobooks");
+            caps.Categories.AddCategoryMapping(5, NewznabStandardCategory.Other, "E-Learning Videos");
+            caps.Categories.AddCategoryMapping(6, NewznabStandardCategory.Other, "Comedy");
+            caps.Categories.AddCategoryMapping(7, NewznabStandardCategory.BooksComics, "Comics");
+
+            return caps;
+        }
+
+        public override async Task<IndexerDownloadResponse> Download(Uri link)
+        {
+            var downloadResponse = await base.Download(link);
+
+            var fileData = downloadResponse.Data;
+
+            if (Settings.UseFreeleechToken == (int)OrpheusFreeleechTokenAction.Preferred
+                && fileData.Length >= 1
+                && fileData[0] != 'd' // simple test for torrent vs HTML content
+                && link.Query.Contains("usetoken=1"))
+            {
+                var html = Encoding.GetString(fileData);
+
+                if (html.Contains("You do not have any freeleech tokens left.")
+                    || html.Contains("You do not have enough freeleech tokens")
+                    || html.Contains("This torrent is too large.")
+                    || html.Contains("You cannot use tokens here"))
+                {
+                    // Try to download again without usetoken
+                    downloadResponse = await base.Download(link.RemoveQueryParam("usetoken"));
+                }
+            }
+
+            return downloadResponse;
         }
     }
 
-    public class OrpheusParser : GazelleParser
+    public class OrpheusRequestGenerator : IIndexerRequestGenerator
     {
-        public OrpheusParser(GazelleSettings settings, IndexerCapabilities capabilities)
-            : base(settings, capabilities)
+        private readonly OrpheusSettings _settings;
+        private readonly IndexerCapabilities _capabilities;
+
+        public Func<IDictionary<string, string>> GetCookies { get; set; }
+        public Action<IDictionary<string, string>, DateTime?> CookiesUpdater { get; set; }
+
+        public OrpheusRequestGenerator(OrpheusSettings settings, IndexerCapabilities capabilities)
         {
+            _settings = settings;
+            _capabilities = capabilities;
         }
 
-        protected override string GetDownloadUrl(int torrentId)
+        public IndexerPageableRequestChain GetSearchRequests(MusicSearchCriteria searchCriteria)
+        {
+            var pageableRequests = new IndexerPageableRequestChain();
+            var parameters = new NameValueCollection();
+
+            if (searchCriteria.Artist.IsNotNullOrWhiteSpace() && searchCriteria.Artist != "VA")
+            {
+                parameters.Set("artistname", searchCriteria.Artist);
+            }
+
+            if (searchCriteria.Album.IsNotNullOrWhiteSpace())
+            {
+                parameters.Set("groupname", searchCriteria.Album);
+            }
+
+            if (searchCriteria.Year.HasValue)
+            {
+                parameters.Set("year", searchCriteria.Year.ToString());
+            }
+
+            pageableRequests.Add(GetPagedRequests(searchCriteria, parameters));
+
+            return pageableRequests;
+        }
+
+        public IndexerPageableRequestChain GetSearchRequests(BookSearchCriteria searchCriteria)
+        {
+            var pageableRequests = new IndexerPageableRequestChain();
+            var parameters = new NameValueCollection();
+
+            pageableRequests.Add(GetPagedRequests(searchCriteria, parameters));
+
+            return pageableRequests;
+        }
+
+        public IndexerPageableRequestChain GetSearchRequests(MovieSearchCriteria searchCriteria)
+        {
+            return new IndexerPageableRequestChain();
+        }
+
+        public IndexerPageableRequestChain GetSearchRequests(TvSearchCriteria searchCriteria)
+        {
+            return new IndexerPageableRequestChain();
+        }
+
+        public IndexerPageableRequestChain GetSearchRequests(BasicSearchCriteria searchCriteria)
+        {
+            var pageableRequests = new IndexerPageableRequestChain();
+            var parameters = new NameValueCollection();
+
+            pageableRequests.Add(GetPagedRequests(searchCriteria, parameters));
+
+            return pageableRequests;
+        }
+
+        private IEnumerable<IndexerRequest> GetPagedRequests(SearchCriteriaBase searchCriteria, NameValueCollection parameters)
+        {
+            var term = searchCriteria.SanitizedSearchTerm.Trim();
+
+            parameters.Set("action", "browse");
+            parameters.Set("order_by", "time");
+            parameters.Set("order_way", "desc");
+
+            if (term.IsNotNullOrWhiteSpace())
+            {
+                parameters.Set("searchstr", term);
+            }
+
+            var queryCats = _capabilities.Categories.MapTorznabCapsToTrackers(searchCriteria.Categories);
+
+            if (queryCats.Any())
+            {
+                queryCats.ForEach(cat => parameters.Set($"filter_cat[{cat}]", "1"));
+            }
+
+            var request = RequestBuilder()
+                .Resource($"/ajax.php?{parameters.GetQueryString()}")
+                .Build();
+
+            yield return new IndexerRequest(request);
+        }
+
+        private HttpRequestBuilder RequestBuilder()
+        {
+            return new HttpRequestBuilder($"{_settings.BaseUrl.TrimEnd('/')}")
+                .Accept(HttpAccept.Json)
+                .SetHeader("Authorization", $"token {_settings.Apikey}");
+        }
+    }
+
+    public class OrpheusParser : IParseIndexerResponse
+    {
+        private readonly OrpheusSettings _settings;
+        private readonly IndexerCapabilitiesCategories _categories;
+        public Action<IDictionary<string, string>, DateTime?> CookiesUpdater { get; set; }
+
+        public OrpheusParser(OrpheusSettings settings, IndexerCapabilitiesCategories categories)
+        {
+            _settings = settings;
+            _categories = categories;
+        }
+
+        public IList<ReleaseInfo> ParseResponse(IndexerResponse indexerResponse)
+        {
+            var torrentInfos = new List<ReleaseInfo>();
+
+            if (indexerResponse.HttpResponse.StatusCode != HttpStatusCode.OK)
+            {
+                STJson.TryDeserialize<GazelleErrorResponse>(indexerResponse.Content, out var errorResponse);
+
+                throw new IndexerException(indexerResponse, $"Unexpected response status {indexerResponse.HttpResponse.StatusCode} code from indexer request: {errorResponse?.Error ?? "Check the logs for more information."}");
+            }
+
+            if (!indexerResponse.HttpResponse.Headers.ContentType.Contains(HttpAccept.Json.Value))
+            {
+                throw new IndexerException(indexerResponse, $"Unexpected response header {indexerResponse.HttpResponse.Headers.ContentType} from indexer request, expected {HttpAccept.Json.Value}");
+            }
+
+            var jsonResponse = new HttpResponse<GazelleResponse>(indexerResponse.HttpResponse);
+            if (jsonResponse.Resource.Status != "success" ||
+                string.IsNullOrWhiteSpace(jsonResponse.Resource.Status) ||
+                jsonResponse.Resource.Response == null)
+            {
+                return torrentInfos;
+            }
+
+            foreach (var result in jsonResponse.Resource.Response.Results)
+            {
+                if (result.Torrents != null)
+                {
+                    foreach (var torrent in result.Torrents)
+                    {
+                        // skip releases that cannot be used with freeleech tokens when the option is enabled
+                        if (_settings.UseFreeleechToken == (int)OrpheusFreeleechTokenAction.Required && !torrent.CanUseToken)
+                        {
+                            continue;
+                        }
+
+                        var id = torrent.TorrentId;
+
+                        var title = GetTitle(result, torrent);
+                        var infoUrl = GetInfoUrl(result.GroupId, id);
+                        var isFreeLeech = torrent.IsFreeLeech || torrent.IsNeutralLeech || torrent.IsPersonalFreeLeech;
+
+                        var release = new TorrentInfo
+                        {
+                            Guid = infoUrl,
+                            InfoUrl = infoUrl,
+                            DownloadUrl = GetDownloadUrl(id, torrent.CanUseToken && !isFreeLeech),
+                            Title = WebUtility.HtmlDecode(title),
+                            Artist = WebUtility.HtmlDecode(result.Artist),
+                            Album = WebUtility.HtmlDecode(result.GroupName),
+                            Year = int.Parse(result.GroupYear),
+                            Container = torrent.Encoding,
+                            Codec = torrent.Format,
+                            Size = long.Parse(torrent.Size),
+                            Seeders = int.Parse(torrent.Seeders),
+                            Peers = int.Parse(torrent.Leechers) + int.Parse(torrent.Seeders),
+                            PublishDate = torrent.Time.ToUniversalTime(),
+                            Scene = torrent.Scene,
+                            Files = torrent.FileCount,
+                            Grabs = torrent.Snatches,
+                            DownloadVolumeFactor = isFreeLeech ? 0 : 1,
+                            UploadVolumeFactor = torrent.IsNeutralLeech ? 0 : 1
+                        };
+
+                        var category = torrent.Category;
+                        if (category == null || category.Contains("Select Category"))
+                        {
+                            release.Categories = _categories.MapTrackerCatToNewznab("1");
+                        }
+                        else
+                        {
+                            release.Categories = _categories.MapTrackerCatDescToNewznab(category);
+                        }
+
+                        torrentInfos.Add(release);
+                    }
+                }
+
+                // Non-Audio files are formatted a little differently (1:1 for group and torrents)
+                else
+                {
+                    // skip releases that cannot be used with freeleech tokens when the option is enabled
+                    if (_settings.UseFreeleechToken == (int)OrpheusFreeleechTokenAction.Required && !result.CanUseToken)
+                    {
+                        continue;
+                    }
+
+                    var id = result.TorrentId;
+                    var infoUrl = GetInfoUrl(result.GroupId, id);
+                    var isFreeLeech = result.IsFreeLeech || result.IsNeutralLeech || result.IsPersonalFreeLeech;
+
+                    var release = new TorrentInfo
+                    {
+                        Guid = infoUrl,
+                        InfoUrl = infoUrl,
+                        DownloadUrl = GetDownloadUrl(id, result.CanUseToken && !isFreeLeech),
+                        Title = WebUtility.HtmlDecode(result.GroupName),
+                        Size = long.Parse(result.Size),
+                        Seeders = int.Parse(result.Seeders),
+                        Peers = int.Parse(result.Leechers) + int.Parse(result.Seeders),
+                        PublishDate = long.TryParse(result.GroupTime, out var num) ? DateTimeOffset.FromUnixTimeSeconds(num).UtcDateTime : DateTimeUtil.FromFuzzyTime(result.GroupTime),
+                        Files = result.FileCount,
+                        Grabs = result.Snatches,
+                        DownloadVolumeFactor = isFreeLeech ? 0 : 1,
+                        UploadVolumeFactor = result.IsNeutralLeech ? 0 : 1
+                    };
+
+                    var category = result.Category;
+                    if (category == null || category.Contains("Select Category"))
+                    {
+                        release.Categories = _categories.MapTrackerCatToNewznab("1");
+                    }
+                    else
+                    {
+                        release.Categories = _categories.MapTrackerCatDescToNewznab(category);
+                    }
+
+                    torrentInfos.Add(release);
+                }
+            }
+
+            // order by date
+            return
+                torrentInfos
+                    .OrderByDescending(o => o.PublishDate)
+                    .ToArray();
+        }
+
+        private string GetTitle(GazelleRelease result, GazelleTorrent torrent)
+        {
+            var title = $"{result.Artist} - {result.GroupName} ({result.GroupYear})";
+
+            if (result.ReleaseType.IsNotNullOrWhiteSpace() && result.ReleaseType != "Unknown")
+            {
+                title += " [" + result.ReleaseType + "]";
+            }
+
+            if (torrent.RemasterTitle.IsNotNullOrWhiteSpace())
+            {
+                title += $" [{$"{torrent.RemasterTitle} {torrent.RemasterYear}".Trim()}]";
+            }
+
+            var flags = new List<string>
+            {
+                $"{torrent.Format} {torrent.Encoding}",
+                $"{torrent.Media}"
+            };
+
+            if (torrent.HasLog)
+            {
+                flags.Add("Log (" + torrent.LogScore + "%)");
+            }
+
+            if (torrent.HasCue)
+            {
+                flags.Add("Cue");
+            }
+
+            return $"{title} [{string.Join(" / ", flags)}]";
+        }
+
+        private string GetDownloadUrl(int torrentId, bool canUseToken)
         {
             var url = new HttpUri(_settings.BaseUrl)
-                .CombinePath("/torrents.php")
+                .CombinePath("/ajax.php")
                 .AddQueryParam("action", "download")
                 .AddQueryParam("id", torrentId);
 
             // Orpheus fails to download if usetoken=0 so we need to only add if we will use one
-            if (_settings.UseFreeleechToken)
+            if (_settings.UseFreeleechToken is (int)OrpheusFreeleechTokenAction.Preferred or (int)OrpheusFreeleechTokenAction.Required && canUseToken)
             {
                 url = url.AddQueryParam("usetoken", "1");
             }
 
             return url.FullUri;
         }
+
+        private string GetInfoUrl(string groupId, int torrentId)
+        {
+            var url = new HttpUri(_settings.BaseUrl)
+                .CombinePath("/torrents.php")
+                .AddQueryParam("id", groupId)
+                .AddQueryParam("torrentid", torrentId);
+
+            return url.FullUri;
+        }
+    }
+
+    public class OrpheusSettingsValidator : NoAuthSettingsValidator<OrpheusSettings>
+    {
+        public OrpheusSettingsValidator()
+        {
+            RuleFor(c => c.Apikey).NotEmpty();
+        }
+    }
+
+    public class OrpheusSettings : NoAuthTorrentBaseSettings
+    {
+        private static readonly OrpheusSettingsValidator Validator = new ();
+
+        public OrpheusSettings()
+        {
+            Apikey = "";
+            UseFreeleechToken = (int)OrpheusFreeleechTokenAction.Never;
+        }
+
+        [FieldDefinition(2, Label = "ApiKey", HelpText = "IndexerOrpheusSettingsApiKeyHelpText", Privacy = PrivacyLevel.ApiKey)]
+        public string Apikey { get; set; }
+
+        [FieldDefinition(3, Type = FieldType.Select, Label = "Use Freeleech Tokens", SelectOptions = typeof(OrpheusFreeleechTokenAction), HelpText = "When to use freeleech tokens")]
+        public int UseFreeleechToken { get; set; }
+
+        public override NzbDroneValidationResult Validate()
+        {
+            return new NzbDroneValidationResult(Validator.Validate(this));
+        }
+    }
+
+    public enum OrpheusFreeleechTokenAction
+    {
+        [FieldOption(Label = "Never", Hint = "Do not use tokens")]
+        Never = 0,
+
+        [FieldOption(Label = "Preferred", Hint = "Use token if possible")]
+        Preferred = 1,
+
+        [FieldOption(Label = "Required", Hint = "Abort download if unable to use token")]
+        Required = 2,
     }
 }

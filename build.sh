@@ -25,15 +25,22 @@ UpdateVersionNumber()
     fi
 }
 
-EnableBsdSupport()
+EnableExtraPlatformsInSDK()
 {
-    #todo enable sdk with
-    #SDK_PATH=$(dotnet --list-sdks | grep -P '5\.\d\.\d+' | head -1 | sed 's/\(5\.[0-9]*\.[0-9]*\).*\[\(.*\)\]/\2\/\1/g')
-    # BUNDLED_VERSIONS="${SDK_PATH}/Microsoft.NETCoreSdk.BundledVersions.props"
+    SDK_PATH=$(dotnet --list-sdks | grep -P '6\.\d\.\d+' | head -1 | sed 's/\(6\.[0-9]*\.[0-9]*\).*\[\(.*\)\]/\2\/\1/g')
+    BUNDLEDVERSIONS="${SDK_PATH}/Microsoft.NETCoreSdk.BundledVersions.props"
+    if grep -q freebsd-x64 $BUNDLEDVERSIONS; then
+        echo "Extra platforms already enabled"
+    else
+        echo "Enabling extra platform support"
+        sed -i.ORI 's/osx-x64/osx-x64;freebsd-x64;linux-x86/' $BUNDLEDVERSIONS
+    fi
+}
 
+EnableExtraPlatforms()
+{
     if grep -qv freebsd-x64 src/Directory.Build.props; then
-        sed -i'' -e "s^<RuntimeIdentifiers>\(.*\)</RuntimeIdentifiers>^<RuntimeIdentifiers>\1;freebsd-x64</RuntimeIdentifiers>^g" src/Directory.Build.props
-        sed -i'' -e "s^<ExcludedRuntimeFrameworkPairs>\(.*\)</ExcludedRuntimeFrameworkPairs>^<ExcludedRuntimeFrameworkPairs>\1;freebsd-x64:net472</ExcludedRuntimeFrameworkPairs>^g" src/Directory.Build.props
+        sed -i'' -e "s^<RuntimeIdentifiers>\(.*\)</RuntimeIdentifiers>^<RuntimeIdentifiers>\1;freebsd-x64;linux-x86</RuntimeIdentifiers>^g" src/Directory.Build.props
     fi
 }
 
@@ -234,6 +241,32 @@ Package()
     esac
 }
 
+BuildInstaller()
+{
+    local framework="$1"
+    local runtime="$2"
+    
+    ./_inno/ISCC.exe distribution/windows/setup/prowlarr.iss "//DFramework=$framework" "//DRuntime=$runtime"
+}
+
+InstallInno()
+{
+    ProgressStart "Installing portable Inno Setup"
+    
+    rm -rf _inno
+    curl -s --output innosetup.exe "https://files.jrsoftware.org/is/6/innosetup-${INNOVERSION:-6.2.2}.exe"
+    mkdir _inno
+    ./innosetup.exe //portable=1 //silent //currentuser //dir=.\\_inno
+    rm innosetup.exe
+    
+    ProgressEnd "Installed portable Inno Setup"
+}
+
+RemoveInno()
+{
+    rm -rf _inno
+}
+
 PackageTests()
 {
     local framework="$1"
@@ -265,8 +298,10 @@ if [ $# -eq 0 ]; then
     BACKEND=YES
     FRONTEND=YES
     PACKAGES=YES
+    INSTALLER=NO
     LINT=YES
-    ENABLE_BSD=NO
+    ENABLE_EXTRA_PLATFORMS=NO
+    ENABLE_EXTRA_PLATFORMS_IN_SDK=NO
 fi
 
 while [[ $# -gt 0 ]]
@@ -278,8 +313,12 @@ case $key in
         BACKEND=YES
         shift # past argument
         ;;
-    --enable-bsd)
-        ENABLE_BSD=YES
+    --enable-bsd|--enable-extra-platforms)
+        ENABLE_EXTRA_PLATFORMS=YES
+        shift # past argument
+        ;;
+    --enable-extra-platforms-in-sdk)
+        ENABLE_EXTRA_PLATFORMS_IN_SDK=YES
         shift # past argument
         ;;
     -r|--runtime)
@@ -298,6 +337,10 @@ case $key in
         ;;
     --packages)
         PACKAGES=YES
+        shift # past argument
+        ;;
+    --installer)
+        INSTALLER=YES
         shift # past argument
         ;;
     --lint)
@@ -319,12 +362,17 @@ esac
 done
 set -- "${POSITIONAL[@]}" # restore positional parameters
 
+if [ "$ENABLE_EXTRA_PLATFORMS_IN_SDK" = "YES" ];
+then
+    EnableExtraPlatformsInSDK
+fi
+
 if [ "$BACKEND" = "YES" ];
 then
     UpdateVersionNumber
-    if [ "$ENABLE_BSD" = "YES" ];
+    if [ "$ENABLE_EXTRA_PLATFORMS" = "YES" ];
     then
-        EnableBsdSupport
+        EnableExtraPlatforms
     fi
     Build
     if [[ -z "$RID" || -z "$FRAMEWORK" ]];
@@ -334,29 +382,29 @@ then
         PackageTests "net6.0" "linux-x64"
         PackageTests "net6.0" "linux-musl-x64"
         PackageTests "net6.0" "osx-x64"
-        if [ "$ENABLE_BSD" = "YES" ];
+        if [ "$ENABLE_EXTRA_PLATFORMS" = "YES" ];
         then
             PackageTests "net6.0" "freebsd-x64"
+            PackageTests "net6.0" "linux-x86"
         fi
     else
         PackageTests "$FRAMEWORK" "$RID"
     fi
 fi
 
-if [ "$FRONTEND" = "YES" ];
+if [[ "$LINT" = "YES" || "$FRONTEND" = "YES" ]];
 then
     YarnInstall
-    RunWebpack
 fi
 
 if [ "$LINT" = "YES" ];
 then
-    if [ -z "$FRONTEND" ];
-    then
-        YarnInstall
-    fi
-    
     LintUI
+fi
+
+if [ "$FRONTEND" = "YES" ];
+then
+    RunWebpack
 fi
 
 if [ "$PACKAGES" = "YES" ];
@@ -375,11 +423,20 @@ then
         Package "net6.0" "linux-musl-arm"
         Package "net6.0" "osx-x64"
         Package "net6.0" "osx-arm64"
-        if [ "$ENABLE_BSD" = "YES" ];
+        if [ "$ENABLE_EXTRA_PLATFORMS" = "YES" ];
         then
             Package "net6.0" "freebsd-x64"
+            Package "net6.0" "linux-x86"
         fi
     else
         Package "$FRAMEWORK" "$RID"
     fi
+fi
+
+if [ "$INSTALLER" = "YES" ];
+then
+    InstallInno
+    BuildInstaller "net6.0" "win-x64"
+    BuildInstaller "net6.0" "win-x86"
+    RemoveInno
 fi

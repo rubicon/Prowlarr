@@ -1,157 +1,154 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Specialized;
+using System.Linq;
 using NLog;
+using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.IndexerSearch.Definitions;
+using NzbDrone.Core.Parser;
 
-namespace NzbDrone.Core.Indexers.Gazelle
+namespace NzbDrone.Core.Indexers.Definitions.Gazelle;
+
+public class GazelleRequestGenerator : IIndexerRequestGenerator
 {
-    public class GazelleRequestGenerator : IIndexerRequestGenerator
+    public GazelleSettings Settings { get; }
+    public IndexerCapabilities Capabilities { get; }
+    public IIndexerHttpClient HttpClient { get; }
+    public Logger Logger { get; }
+    public Func<IDictionary<string, string>> GetCookies { get; set; }
+    public Action<IDictionary<string, string>, DateTime?> CookiesUpdater { get; set; }
+    protected virtual bool ImdbInTags => false;
+    protected virtual string ApiUrl => Settings.BaseUrl + "ajax.php";
+
+    public GazelleRequestGenerator(GazelleSettings settings, IndexerCapabilities capabilities, IIndexerHttpClient httpClient, Logger logger)
     {
-        public GazelleSettings Settings { get; set; }
+        Settings = settings;
+        Capabilities = capabilities;
+        HttpClient = httpClient;
+        Logger = logger;
+    }
 
-        public IDictionary<string, string> AuthCookieCache { get; set; }
-        public IIndexerHttpClient HttpClient { get; set; }
-        public IndexerCapabilities Capabilities { get; set; }
-        public Logger Logger { get; set; }
-
-        protected virtual string APIUrl => Settings.BaseUrl + "ajax.php";
-        protected virtual bool ImdbInTags => false;
-
-        public Func<IDictionary<string, string>> GetCookies { get; set; }
-        public Action<IDictionary<string, string>, DateTime?> CookiesUpdater { get; set; }
-
-        public virtual IndexerPageableRequestChain GetRecentRequests()
+    protected IEnumerable<IndexerRequest> GetRequest(NameValueCollection parameters)
+    {
+        var request = new IndexerRequest($"{ApiUrl}?{parameters.GetQueryString()}", HttpAccept.Json)
         {
-            var pageableRequests = new IndexerPageableRequestChain();
+            HttpRequest =
+            {
+                AllowAutoRedirect = false
+            }
+        };
 
-            pageableRequests.Add(GetRequest(null));
+        yield return request;
+    }
 
-            return pageableRequests;
+    public virtual IndexerPageableRequestChain GetSearchRequests(MovieSearchCriteria searchCriteria)
+    {
+        var pageableRequests = new IndexerPageableRequestChain();
+
+        var parameters = GetBasicSearchParameters(searchCriteria, searchCriteria.SanitizedSearchTerm);
+
+        if (searchCriteria.ImdbId != null)
+        {
+            parameters.Set(ImdbInTags ? "taglist" : "cataloguenumber", searchCriteria.FullImdbId);
         }
 
-        private IEnumerable<IndexerRequest> GetRequest(string searchParameters)
+        pageableRequests.Add(GetRequest(parameters));
+
+        return pageableRequests;
+    }
+
+    public IndexerPageableRequestChain GetSearchRequests(MusicSearchCriteria searchCriteria)
+    {
+        var pageableRequests = new IndexerPageableRequestChain();
+
+        var parameters = GetBasicSearchParameters(searchCriteria, searchCriteria.SanitizedSearchTerm);
+
+        if (searchCriteria.Artist.IsNotNullOrWhiteSpace() && searchCriteria.Artist != "VA")
         {
-            var filter = "";
-            if (searchParameters == null)
-            {
-            }
-
-            var request =
-                new IndexerRequest(
-                    $"{APIUrl}?{searchParameters}{filter}",
-                    HttpAccept.Json);
-
-            yield return request;
+            parameters.Set("artistname", searchCriteria.Artist);
         }
 
-        private string GetBasicSearchParameters(string searchTerm, int[] categories)
+        if (searchCriteria.Album.IsNotNullOrWhiteSpace())
         {
-            var searchString = GetSearchTerm(searchTerm);
-
-            var parameters = "action=browse&order_by=time&order_way=desc";
-
-            if (!string.IsNullOrWhiteSpace(searchString))
-            {
-                parameters += string.Format("&searchstr={0}", searchString);
-            }
-
-            if (categories != null)
-            {
-                foreach (var cat in Capabilities.Categories.MapTorznabCapsToTrackers(categories))
-                {
-                    parameters += string.Format("&filter_cat[{0}]=1", cat);
-                }
-            }
-
-            return parameters;
+            parameters.Set("groupname", searchCriteria.Album);
         }
 
-        public IndexerPageableRequestChain GetSearchRequests(MovieSearchCriteria searchCriteria)
+        if (searchCriteria.Label.IsNotNullOrWhiteSpace())
         {
-            var parameters = GetBasicSearchParameters(searchCriteria.SearchTerm, searchCriteria.Categories);
-
-            if (searchCriteria.ImdbId != null)
-            {
-                if (ImdbInTags)
-                {
-                    parameters += string.Format("&taglist={0}", searchCriteria.FullImdbId);
-                }
-                else
-                {
-                    parameters += string.Format("&cataloguenumber={0}", searchCriteria.FullImdbId);
-                }
-            }
-
-            var pageableRequests = new IndexerPageableRequestChain();
-            pageableRequests.Add(GetRequest(parameters));
-            return pageableRequests;
+            parameters.Set("recordlabel", searchCriteria.Label);
         }
 
-        public IndexerPageableRequestChain GetSearchRequests(MusicSearchCriteria searchCriteria)
+        pageableRequests.Add(GetRequest(parameters));
+
+        return pageableRequests;
+    }
+
+    public IndexerPageableRequestChain GetSearchRequests(TvSearchCriteria searchCriteria)
+    {
+        var pageableRequests = new IndexerPageableRequestChain();
+
+        var parameters = GetBasicSearchParameters(searchCriteria, searchCriteria.SanitizedTvSearchString);
+
+        if (searchCriteria.ImdbId != null)
         {
-            var parameters = GetBasicSearchParameters(searchCriteria.SearchTerm, searchCriteria.Categories);
-
-            if (searchCriteria.Artist != null)
-            {
-                parameters += string.Format("&artistname={0}", searchCriteria.Artist);
-            }
-
-            if (searchCriteria.Label != null)
-            {
-                parameters += string.Format("&recordlabel={0}", searchCriteria.Label);
-            }
-
-            if (searchCriteria.Album != null)
-            {
-                parameters += string.Format("&groupname={0}", searchCriteria.Album);
-            }
-
-            var pageableRequests = new IndexerPageableRequestChain();
-            pageableRequests.Add(GetRequest(parameters));
-            return pageableRequests;
+            parameters.Set(ImdbInTags ? "taglist" : "cataloguenumber", searchCriteria.FullImdbId);
         }
 
-        public IndexerPageableRequestChain GetSearchRequests(TvSearchCriteria searchCriteria)
-        {
-            var parameters = GetBasicSearchParameters(searchCriteria.SanitizedTvSearchString, searchCriteria.Categories);
+        pageableRequests.Add(GetRequest(parameters));
 
-            if (searchCriteria.ImdbId != null)
+        return pageableRequests;
+    }
+
+    public IndexerPageableRequestChain GetSearchRequests(BookSearchCriteria searchCriteria)
+    {
+        var pageableRequests = new IndexerPageableRequestChain();
+
+        var parameters = GetBasicSearchParameters(searchCriteria, searchCriteria.SanitizedSearchTerm);
+        pageableRequests.Add(GetRequest(parameters));
+
+        return pageableRequests;
+    }
+
+    public IndexerPageableRequestChain GetSearchRequests(BasicSearchCriteria searchCriteria)
+    {
+        var pageableRequests = new IndexerPageableRequestChain();
+
+        var parameters = GetBasicSearchParameters(searchCriteria, searchCriteria.SanitizedSearchTerm);
+        pageableRequests.Add(GetRequest(parameters));
+
+        return pageableRequests;
+    }
+
+    // hook to adjust the search term
+    protected virtual string GetSearchTerm(string term) => term;
+
+    protected virtual NameValueCollection GetBasicSearchParameters(SearchCriteriaBase searchCriteria, string term)
+    {
+        var parameters = new NameValueCollection
+        {
+            { "action", "browse" },
+            { "order_by", "time" },
+            { "order_way", "desc" }
+        };
+
+        var searchTerm = GetSearchTerm(term);
+
+        if (searchTerm.IsNotNullOrWhiteSpace())
+        {
+            parameters.Set("searchstr", searchTerm.Replace(".", " "));
+        }
+
+        if (searchCriteria.Categories != null && searchCriteria.Categories.Any())
+        {
+            var queryCats = Capabilities.Categories.MapTorznabCapsToTrackers(searchCriteria.Categories);
+
+            if (queryCats.Any())
             {
-                if (ImdbInTags)
-                {
-                    parameters += string.Format("&taglist={0}", searchCriteria.FullImdbId);
-                }
-                else
-                {
-                    parameters += string.Format("&cataloguenumber={0}", searchCriteria.FullImdbId);
-                }
+                queryCats.ForEach(cat => parameters.Set($"filter_cat[{cat}]", "1"));
             }
-
-            var pageableRequests = new IndexerPageableRequestChain();
-            pageableRequests.Add(GetRequest(parameters));
-            return pageableRequests;
         }
 
-        public IndexerPageableRequestChain GetSearchRequests(BookSearchCriteria searchCriteria)
-        {
-            var parameters = GetBasicSearchParameters(searchCriteria.SearchTerm, searchCriteria.Categories);
-
-            var pageableRequests = new IndexerPageableRequestChain();
-            pageableRequests.Add(GetRequest(parameters));
-            return pageableRequests;
-        }
-
-        // hook to adjust the search term
-        protected virtual string GetSearchTerm(string term) => term;
-
-        public IndexerPageableRequestChain GetSearchRequests(BasicSearchCriteria searchCriteria)
-        {
-            var parameters = GetBasicSearchParameters(searchCriteria.SearchTerm, searchCriteria.Categories);
-
-            var pageableRequests = new IndexerPageableRequestChain();
-            pageableRequests.Add(GetRequest(parameters));
-            return pageableRequests;
-        }
+        return parameters;
     }
 }

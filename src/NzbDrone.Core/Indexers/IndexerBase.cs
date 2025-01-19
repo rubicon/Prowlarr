@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using FluentValidation.Results;
 using NLog;
@@ -22,6 +23,7 @@ namespace NzbDrone.Core.Indexers
 
         public abstract string Name { get; }
         public abstract string[] IndexerUrls { get; }
+        public abstract string[] LegacyUrls { get; }
         public abstract string Description { get; }
         public abstract Encoding Encoding { get; }
         public abstract string Language { get; }
@@ -34,6 +36,7 @@ namespace NzbDrone.Core.Indexers
         public abstract bool SupportsRss { get; }
         public abstract bool SupportsSearch { get; }
         public abstract bool SupportsRedirect { get; }
+        public abstract bool SupportsPagination { get; }
         public abstract IndexerCapabilities Capabilities { get; protected set; }
 
         public IndexerBase(IIndexerStatusService indexerStatusService, IConfigService configService, Logger logger)
@@ -49,12 +52,7 @@ namespace NzbDrone.Core.Indexers
         {
             var attributes = GetType().GetCustomAttributes(false);
 
-            foreach (ObsoleteAttribute attribute in attributes.OfType<ObsoleteAttribute>())
-            {
-                return true;
-            }
-
-            return false;
+            return attributes.OfType<ObsoleteAttribute>().Any();
         }
 
         public virtual ProviderMessage Message => null;
@@ -67,7 +65,7 @@ namespace NzbDrone.Core.Indexers
 
                 yield return new IndexerDefinition
                 {
-                    Name = GetType().Name,
+                    Name = Name ?? GetType().Name,
                     Enable = config.Validate().IsValid && SupportsRss,
                     Implementation = GetType().Name,
                     Settings = config
@@ -99,11 +97,11 @@ namespace NzbDrone.Core.Indexers
         public abstract Task<IndexerPageableQueryResult> Fetch(TvSearchCriteria searchCriteria);
         public abstract Task<IndexerPageableQueryResult> Fetch(BookSearchCriteria searchCriteria);
         public abstract Task<IndexerPageableQueryResult> Fetch(BasicSearchCriteria searchCriteria);
-        public abstract Task<byte[]> Download(Uri link);
+        public abstract Task<IndexerDownloadResponse> Download(Uri link);
 
         public abstract IndexerCapabilities GetCapabilities();
 
-        protected virtual IList<ReleaseInfo> CleanupReleases(IEnumerable<ReleaseInfo> releases)
+        protected virtual IList<ReleaseInfo> CleanupReleases(IEnumerable<ReleaseInfo> releases, SearchCriteriaBase searchCriteria)
         {
             var result = releases.ToList();
 
@@ -130,14 +128,33 @@ namespace NzbDrone.Core.Indexers
                 c.IndexerId = Definition.Id;
                 c.Indexer = Definition.Name;
                 c.DownloadProtocol = Protocol;
+                c.IndexerPrivacy = ((IndexerDefinition)Definition).Privacy;
                 c.IndexerPriority = ((IndexerDefinition)Definition).Priority;
 
-                if (Protocol == DownloadProtocol.Torrent)
+                //Add common flags
+                if (Protocol == DownloadProtocol.Torrent && c is TorrentInfo torrentRelease)
                 {
-                    //Add common flags
-                    if (((TorrentInfo)c).DownloadVolumeFactor == 0)
+                    if (torrentRelease.DownloadVolumeFactor == 0.0)
                     {
-                        ((TorrentInfo)c).IndexerFlags.Add(IndexerFlag.FreeLeech);
+                        torrentRelease.IndexerFlags.Add(IndexerFlag.FreeLeech);
+                    }
+                    else if (torrentRelease.DownloadVolumeFactor == 0.5)
+                    {
+                        torrentRelease.IndexerFlags.Add(IndexerFlag.HalfLeech);
+                    }
+
+                    if (torrentRelease.UploadVolumeFactor == 0.0)
+                    {
+                        torrentRelease.IndexerFlags.Add(IndexerFlag.NeutralLeech);
+                    }
+                    else if (torrentRelease.UploadVolumeFactor == 2.0)
+                    {
+                        torrentRelease.IndexerFlags.Add(IndexerFlag.DoubleUpload);
+                    }
+
+                    if (torrentRelease.Scene.GetValueOrDefault(false))
+                    {
+                        torrentRelease.IndexerFlags.Add(IndexerFlag.Scene);
                     }
                 }
             });
@@ -145,11 +162,41 @@ namespace NzbDrone.Core.Indexers
             return result.DistinctBy(v => v.Guid).ToList();
         }
 
-        protected TSettings GetDefaultBaseUrl(TSettings settings)
+        protected virtual IEnumerable<ReleaseInfo> FilterReleasesByQuery(IEnumerable<ReleaseInfo> releases, SearchCriteriaBase searchCriteria)
         {
-            if (settings.BaseUrl.IsNullOrWhiteSpace() && IndexerUrls.First().IsNotNullOrWhiteSpace())
+            var commonWords = new[] { "and", "the", "an", "of" };
+
+            if (!searchCriteria.IsRssSearch && !searchCriteria.IsIdSearch)
             {
-                settings.BaseUrl = IndexerUrls.First();
+                var splitRegex = new Regex("[^\\w]+");
+
+                // split search term to individual terms for less aggressive filtering, filter common terms
+                var terms = splitRegex.Split(searchCriteria.SearchTerm).Where(t => t.IsNotNullOrWhiteSpace() && t.Length > 1 && !commonWords.ContainsIgnoreCase(t)).ToArray();
+
+                // check in title and description for any term searched for
+                releases = releases.Where(r =>
+                {
+                    var matches = terms.Where(t => (r.Title.IsNotNullOrWhiteSpace() && r.Title.ContainsIgnoreCase(t)) || (r.Description.IsNotNullOrWhiteSpace() && r.Description.ContainsIgnoreCase(t)));
+
+                    return terms.Length > 1 ? matches.Skip(1).Any() : matches.Any();
+                }).ToList();
+            }
+
+            return releases;
+        }
+
+        protected virtual TSettings GetDefaultBaseUrl(TSettings settings)
+        {
+            var defaultLink = IndexerUrls.FirstOrDefault();
+
+            if (settings.BaseUrl.IsNullOrWhiteSpace() && defaultLink.IsNotNullOrWhiteSpace())
+            {
+                settings.BaseUrl = defaultLink;
+            }
+            else if (settings.BaseUrl.IsNotNullOrWhiteSpace() && LegacyUrls.Contains(settings.BaseUrl))
+            {
+                _logger.Debug(string.Format("Changing legacy site link from {0} to {1}", settings.BaseUrl, defaultLink));
+                settings.BaseUrl = defaultLink;
             }
 
             return settings;

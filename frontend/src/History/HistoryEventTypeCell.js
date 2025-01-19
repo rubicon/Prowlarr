@@ -20,21 +20,22 @@ function getIconName(eventType) {
   }
 }
 
-function getIconKind(successful) {
-  switch (successful) {
-    case false:
-      return kinds.DANGER;
-    default:
-      return kinds.DEFAULT;
+function getIconKind(successful, redirect) {
+  if (redirect) {
+    return kinds.INFO;
+  } else if (!successful) {
+    return kinds.DANGER;
   }
+
+  return kinds.DEFAULT;
 }
 
-function getTooltip(eventType, data, indexer) {
+function getTooltip(eventType, data, indexer, redirect) {
   switch (eventType) {
     case 'indexerQuery':
       return `Query "${data.query}" sent to ${indexer.name}`;
     case 'releaseGrabbed':
-      return `Release grabbed from ${indexer.name}`;
+      return redirect ? `Release grabbed via redirect from ${indexer.name}` : `Release grabbed from ${indexer.name}`;
     case 'indexerAuth':
       return `Auth attempted for ${indexer.name}`;
     case 'indexerRss':
@@ -45,9 +46,12 @@ function getTooltip(eventType, data, indexer) {
 }
 
 function HistoryEventTypeCell({ eventType, successful, data, indexer }) {
+  const { grabMethod } = data;
+  const redirect = grabMethod && grabMethod.toLowerCase() === 'redirect';
+
   const iconName = getIconName(eventType);
-  const iconKind = getIconKind(successful);
-  const tooltip = getTooltip(eventType, data, indexer);
+  const iconKind = getIconKind(successful, redirect);
+  const tooltip = getTooltip(eventType, data, indexer, redirect);
 
   return (
     <TableRowCell

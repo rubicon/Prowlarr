@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
 using FluentValidation;
@@ -23,18 +22,14 @@ namespace NzbDrone.Core.Indexers.Newznab
 
         private static bool ShouldHaveApiKey(NewznabSettings settings)
         {
-            if (settings.BaseUrl == null)
-            {
-                return false;
-            }
-
-            return ApiKeyWhiteList.Any(c => settings.BaseUrl.ToLowerInvariant().Contains(c));
+            return settings.BaseUrl != null && ApiKeyWhiteList.Any(c => settings.BaseUrl.ToLowerInvariant().Contains(c));
         }
 
         private static readonly Regex AdditionalParametersRegex = new Regex(@"(&.+?\=.+?)+", RegexOptions.Compiled);
 
         public NewznabSettingsValidator()
         {
+            RuleFor(x => x.BaseSettings).SetValidator(new IndexerCommonSettingsValidator());
             RuleFor(c => c.BaseUrl).ValidRootUrl();
             RuleFor(c => c.ApiPath).ValidUrlBase("/api");
             RuleFor(c => c.ApiKey).NotEmpty().When(ShouldHaveApiKey);
@@ -47,13 +42,14 @@ namespace NzbDrone.Core.Indexers.Newznab
 
             RuleFor(c => c.VipExpiration).Must(c => c.IsFutureDate())
                                          .When(c => c.VipExpiration.IsNotNullOrWhiteSpace())
-                                         .WithMessage("Must be a future date");
+                                         .WithMessage("Must be a future date")
+                                         .AsWarning();
         }
     }
 
     public class NewznabSettings : IIndexerSettings
     {
-        private static readonly NewznabSettingsValidator Validator = new NewznabSettingsValidator();
+        private static readonly NewznabSettingsValidator Validator = new ();
 
         public NewznabSettings()
         {
@@ -64,22 +60,23 @@ namespace NzbDrone.Core.Indexers.Newznab
         [FieldDefinition(0, Label = "URL")]
         public string BaseUrl { get; set; }
 
-        [FieldDefinition(1, Label = "API Path", HelpText = "Path to the api, usually /api", Advanced = true)]
+        [FieldDefinition(1, Label = "IndexerSettingsApiPath", HelpText = "IndexerSettingsApiPathHelpText", Advanced = true)]
+        [FieldToken(TokenField.HelpText, "IndexerSettingsApiPath", "url", "/api")]
         public string ApiPath { get; set; }
 
-        [FieldDefinition(2, Label = "API Key", HelpText = "Site API Key", Privacy = PrivacyLevel.ApiKey)]
+        [FieldDefinition(2, Label = "ApiKey", HelpText = "IndexerNewznabSettingsApiKeyHelpText", Privacy = PrivacyLevel.ApiKey)]
         public string ApiKey { get; set; }
 
-        [FieldDefinition(5, Label = "Additional Parameters", HelpText = "Additional Newznab parameters", Advanced = true)]
+        [FieldDefinition(5, Label = "IndexerSettingsAdditionalParameters", HelpText = "IndexerNewznabSettingsAdditionalParametersHelpText", Advanced = true)]
         public string AdditionalParameters { get; set; }
 
-        [FieldDefinition(6, Label = "VIP Expiration", HelpText = "Enter date (yyyy-mm-dd) for VIP Expiration or blank, Prowlarr will notify 1 week from expiration of VIP")]
+        [FieldDefinition(6, Label = "IndexerSettingsVipExpiration", HelpText = "IndexerNewznabSettingsVipExpirationHelpText")]
         public string VipExpiration { get; set; }
 
         [FieldDefinition(7)]
-        public IndexerBaseSettings BaseSettings { get; set; } = new IndexerBaseSettings();
+        public IndexerBaseSettings BaseSettings { get; set; } = new ();
 
-        public List<IndexerCategory> Categories { get; set; }
+        public NewznabCapabilitiesSettings Capabilities { get; set; }
 
         // Field 8 is used by TorznabSettings MinimumSeeders
         // If you need to add another field here, update TorznabSettings as well and this comment

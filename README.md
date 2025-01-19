@@ -1,8 +1,8 @@
 # Prowlarr
 
 [![Build Status](https://dev.azure.com/Prowlarr/Prowlarr/_apis/build/status/Prowlarr.Prowlarr?branchName=develop)](https://dev.azure.com/Prowlarr/Prowlarr/_build/latest?definitionId=1&branchName=develop)
-[![Translated](https://translate.servarr.com/widgets/servarr/-/prowlarr/svg-badge.svg)](https://translate.servarr.com/engage/prowlarr/?utm_source=widget)
-[![Docker Pulls](https://img.shields.io/docker/pulls/hotio/prowlarr.svg)](https://wiki.servarr.com/prowlarr/installation#docker)
+[![Translation status](https://translate.servarr.com/widget/servarr/prowlarr/svg-badge.svg)](https://translate.servarr.com/engage/servarr/?utm_source=widget)
+[![Docker Pulls](https://img.shields.io/docker/pulls/hotio/prowlarr.svg)](https://wiki.servarr.com/prowlarr/installation/docker)
 ![Github Downloads](https://img.shields.io/github/downloads/Prowlarr/Prowlarr/total.svg)
 [![Backers on Open Collective](https://opencollective.com/Prowlarr/backers/badge.svg)](#backers)
 [![Sponsors on Open Collective](https://opencollective.com/Prowlarr/sponsors/badge.svg)](#sponsors)
@@ -27,12 +27,8 @@ Prowlarr is an indexer manager/proxy built on the popular \*arr .net/reactjs bas
 
 ## Support
 
-Note: Prowlarr is currently early in life, thus bugs should be expected
-
 [![Wiki](https://img.shields.io/badge/servarr-wiki-181717.svg?maxAge=60)](https://wiki.servarr.com/prowlarr)
-
 [![Discord](https://img.shields.io/badge/discord-chat-7289DA.svg?maxAge=60)](https://prowlarr.com/discord)
-[![Reddit](https://img.shields.io/badge/reddit-discussion-FF4500.svg?maxAge=60)](https://www.reddit.com/r/Prowlarr)
 
 Note: GitHub Issues are for Bugs and Feature Requests Only
 
@@ -72,16 +68,16 @@ Support this project by becoming a sponsor. Your logo will show up here with a l
 
 ## JetBrains
 
-Thank you to [<img src="/Logo/jetbrains.svg" alt="JetBrains" width="32"> JetBrains](http://www.jetbrains.com/) for providing us with free licenses to their great tools.
+Thank you to [<img src="https://resources.jetbrains.com/storage/products/company/brand/logos/jetbrains.png" alt="JetBrains" width="96">](http://www.jetbrains.com/) for providing us with free licenses to their great tools.
 
-- [<img src="/Logo/resharper.svg" alt="ReSharper" width="32"> ReSharper](http://www.jetbrains.com/resharper/)
-- [<img src="/Logo/webstorm.svg" alt="WebStorm" width="32"> WebStorm](http://www.jetbrains.com/webstorm/)
-- [<img src="/Logo/rider.svg" alt="Rider" width="32"> Rider](http://www.jetbrains.com/rider/)
-- [<img src="/Logo/dottrace.svg" alt="dotTrace" width="32"> dotTrace](http://www.jetbrains.com/dottrace/)
+* [<img src="https://resources.jetbrains.com/storage/products/company/brand/logos/ReSharper_icon.png" alt="ReSharper" width="32"> ReSharper](http://www.jetbrains.com/resharper/)
+* [<img src="https://resources.jetbrains.com/storage/products/company/brand/logos/WebStorm_icon.png" alt="WebStorm" width="32"> WebStorm](http://www.jetbrains.com/webstorm/)
+* [<img src="https://resources.jetbrains.com/storage/products/company/brand/logos/Rider_icon.png" alt="Rider" width="32"> Rider](http://www.jetbrains.com/rider/)
+* [<img src="https://resources.jetbrains.com/storage/products/company/brand/logos/dotTrace_icon.png" alt="dotTrace" width="32"> dotTrace](http://www.jetbrains.com/dottrace/)
 
 ### License
 
 - [GNU GPL v3](http://www.gnu.org/licenses/gpl.html)
-- Copyright 2010-2022
+- Copyright 2010-2024
 
 Icon Credit - [Box vector created by freepik - www.freepik.com](https://www.freepik.com/vectors/box)

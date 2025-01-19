@@ -16,6 +16,7 @@ namespace NzbDrone.Core.Datastore
     {
         IEnumerable<TModel> All();
         int Count();
+        TModel Find(int id);
         TModel Get(int id);
         TModel Insert(TModel model);
         TModel Update(TModel model);
@@ -66,7 +67,7 @@ namespace NzbDrone.Core.Datastore
             _updateSql = GetUpdateSql(_properties);
         }
 
-        protected virtual SqlBuilder Builder() => new SqlBuilder();
+        protected virtual SqlBuilder Builder() => new SqlBuilder(_database.DatabaseType);
 
         protected virtual List<TModel> Query(SqlBuilder builder) => _database.Query<TModel>(builder).ToList();
 
@@ -87,9 +88,16 @@ namespace NzbDrone.Core.Datastore
             return Query(Builder());
         }
 
-        public TModel Get(int id)
+        public TModel Find(int id)
         {
             var model = Query(x => x.Id == id).FirstOrDefault();
+
+            return model;
+        }
+
+        public TModel Get(int id)
+        {
+            var model = Find(id);
 
             if (model == null)
             {
@@ -103,7 +111,7 @@ namespace NzbDrone.Core.Datastore
         {
             if (!ids.Any())
             {
-                return new List<TModel>();
+                return Array.Empty<TModel>();
             }
 
             var result = Query(x => ids.Contains(x.Id));
@@ -167,14 +175,12 @@ namespace NzbDrone.Core.Datastore
                 }
             }
 
-            if (_database.DatabaseType == DatabaseType.SQLite)
-            {
-                return $"INSERT INTO {_table} ({sbColumnList.ToString()}) VALUES ({sbParameterList.ToString()}); SELECT last_insert_rowid() id";
-            }
-            else
+            if (_database.DatabaseType == DatabaseType.PostgreSQL)
             {
                 return $"INSERT INTO \"{_table}\" ({sbColumnList.ToString()}) VALUES ({sbParameterList.ToString()}) RETURNING \"Id\"";
             }
+
+            return $"INSERT INTO {_table} ({sbColumnList.ToString()}) VALUES ({sbParameterList.ToString()}); SELECT last_insert_rowid() id";
         }
 
         private TModel Insert(IDbConnection connection, IDbTransaction transaction, TModel model)
@@ -198,7 +204,7 @@ namespace NzbDrone.Core.Datastore
 
             using (var conn = _database.OpenConnection())
             {
-                using (IDbTransaction tran = conn.BeginTransaction(IsolationLevel.ReadCommitted))
+                using (var tran = conn.BeginTransaction(IsolationLevel.ReadCommitted))
                 {
                     foreach (var model in models)
                     {

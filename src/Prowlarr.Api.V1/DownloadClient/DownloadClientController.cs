@@ -1,26 +1,18 @@
 using NzbDrone.Core.Download;
+using NzbDrone.SignalR;
 using Prowlarr.Http;
 
 namespace Prowlarr.Api.V1.DownloadClient
 {
     [V1ApiController]
-    public class DownloadClientController : ProviderControllerBase<DownloadClientResource, IDownloadClient, DownloadClientDefinition>
+    public class DownloadClientController : ProviderControllerBase<DownloadClientResource, DownloadClientBulkResource, IDownloadClient, DownloadClientDefinition>
     {
-        public static readonly DownloadClientResourceMapper ResourceMapper = new DownloadClientResourceMapper();
+        public static readonly DownloadClientResourceMapper ResourceMapper = new ();
+        public static readonly DownloadClientBulkResourceMapper BulkResourceMapper = new ();
 
-        public DownloadClientController(IDownloadClientFactory downloadClientFactory)
-            : base(downloadClientFactory, "downloadclient", ResourceMapper)
+        public DownloadClientController(IBroadcastSignalRMessage signalRBroadcaster, IDownloadClientFactory downloadClientFactory)
+            : base(signalRBroadcaster, downloadClientFactory, "downloadclient", ResourceMapper, BulkResourceMapper)
         {
-        }
-
-        protected override void Validate(DownloadClientDefinition definition, bool includeWarnings)
-        {
-            if (!definition.Enable)
-            {
-                return;
-            }
-
-            base.Validate(definition, includeWarnings);
         }
     }
 }

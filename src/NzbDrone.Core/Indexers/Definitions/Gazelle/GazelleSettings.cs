@@ -1,47 +1,38 @@
-using FluentValidation;
 using NzbDrone.Core.Annotations;
+using NzbDrone.Core.Indexers.Settings;
 using NzbDrone.Core.Validation;
 
-namespace NzbDrone.Core.Indexers.Gazelle
+namespace NzbDrone.Core.Indexers.Definitions.Gazelle;
+
+public class GazelleSettingsValidator<T> : UserPassBaseSettingsValidator<T>
+    where T : GazelleSettings
 {
-    public class GazelleSettingsValidator : AbstractValidator<GazelleSettings>
+}
+
+public class GazelleSettings : UserPassTorrentBaseSettings
+{
+    private static readonly GazelleSettingsValidator<GazelleSettings> Validator = new ();
+
+    public string AuthKey { get; set; }
+    public string PassKey { get; set; }
+
+    [FieldDefinition(5, Type = FieldType.Select, Label = "Use Freeleech Tokens", SelectOptions = typeof(GazelleFreeleechTokenAction), HelpText = "When to use freeleech tokens")]
+    public int UseFreeleechToken { get; set; }
+
+    public override NzbDroneValidationResult Validate()
     {
-        public GazelleSettingsValidator()
-        {
-            RuleFor(c => c.Username).NotEmpty();
-            RuleFor(c => c.Password).NotEmpty();
-        }
+        return new NzbDroneValidationResult(Validator.Validate(this));
     }
+}
 
-    public class GazelleSettings : IIndexerSettings
-    {
-        private static readonly GazelleSettingsValidator Validator = new GazelleSettingsValidator();
+public enum GazelleFreeleechTokenAction
+{
+    [FieldOption(Label = "Never", Hint = "Do not use tokens")]
+    Never = 0,
 
-        public GazelleSettings()
-        {
-        }
+    [FieldOption(Label = "Preferred", Hint = "Use token if possible")]
+    Preferred = 1,
 
-        public string AuthKey;
-        public string PassKey;
-
-        [FieldDefinition(1, Label = "Base Url", Type = FieldType.Select, SelectOptionsProviderAction = "getUrls", HelpText = "Select which baseurl Prowlarr will use for requests to the site")]
-        public string BaseUrl { get; set; }
-
-        [FieldDefinition(2, Label = "Username", HelpText = "Site Username", Privacy = PrivacyLevel.UserName)]
-        public string Username { get; set; }
-
-        [FieldDefinition(3, Label = "Password", HelpText = "Site Password", Privacy = PrivacyLevel.Password, Type = FieldType.Password)]
-        public string Password { get; set; }
-
-        [FieldDefinition(4, Type = FieldType.Checkbox, Label = "Use Freeleech Token", HelpText = "Use Freeleech Token")]
-        public bool UseFreeleechToken { get; set; }
-
-        [FieldDefinition(5)]
-        public IndexerBaseSettings BaseSettings { get; set; } = new IndexerBaseSettings();
-
-        public NzbDroneValidationResult Validate()
-        {
-            return new NzbDroneValidationResult(Validator.Validate(this));
-        }
-    }
+    [FieldOption(Label = "Required", Hint = "Abort download if unable to use token")]
+    Required = 2,
 }

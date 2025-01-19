@@ -1,7 +1,13 @@
 import Chart from 'chart.js/auto';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
-import colors from 'Styles/Variables/colors';
+import { defaultFontFamily } from 'Styles/Variables/fonts';
+
+function getColors(kind) {
+
+  const style = getComputedStyle(document.body);
+  return style.getPropertyValue('--chartColorsDiversified').split(',');
+}
 
 class DoughnutChart extends Component {
   constructor(props) {
@@ -17,7 +23,15 @@ class DoughnutChart extends Component {
         plugins: {
           title: {
             display: true,
-            text: this.props.title
+            align: 'start',
+            text: this.props.title,
+            padding: {
+              bottom: 30
+            },
+            font: {
+              size: 14,
+              family: defaultFontFamily
+            }
           },
           legend: {
             position: 'bottom'
@@ -29,7 +43,7 @@ class DoughnutChart extends Component {
         datasets: [{
           label: this.props.title,
           data: this.props.data.map((d) => d.value),
-          backgroundColor: colors.chartColors
+          backgroundColor: getColors()
         }]
       }
     });

@@ -4,7 +4,7 @@ import { connect } from 'react-redux';
 import { createSelector } from 'reselect';
 import withScrollPosition from 'Components/withScrollPosition';
 import { bulkGrabReleases, cancelFetchReleases, clearReleases, fetchReleases, setReleasesFilter, setReleasesSort, setReleasesTableOption } from 'Store/Actions/releaseActions';
-import scrollPositions from 'Store/scrollPositions';
+import { fetchDownloadClients } from 'Store/Actions/Settings/downloadClients';
 import createDimensionsSelector from 'Store/Selectors/createDimensionsSelector';
 import createReleaseClientSideCollectionItemsSelector from 'Store/Selectors/createReleaseClientSideCollectionItemsSelector';
 import SearchIndex from './SearchIndex';
@@ -56,20 +56,24 @@ function createMapDispatchToProps(dispatch, props) {
 
     dispatchClearReleases() {
       dispatch(clearReleases());
+    },
+
+    dispatchFetchDownloadClients() {
+      dispatch(fetchDownloadClients());
     }
   };
 }
 
 class SearchIndexConnector extends Component {
 
+  componentDidMount() {
+    this.props.dispatchFetchDownloadClients();
+  }
+
   componentWillUnmount() {
     this.props.dispatchCancelFetchReleases();
     this.props.dispatchClearReleases();
   }
-
-  onScroll = ({ scrollTop }) => {
-    scrollPositions.movieIndex = scrollTop;
-  };
 
   //
   // Render
@@ -90,6 +94,7 @@ SearchIndexConnector.propTypes = {
   onBulkGrabPress: PropTypes.func.isRequired,
   dispatchCancelFetchReleases: PropTypes.func.isRequired,
   dispatchClearReleases: PropTypes.func.isRequired,
+  dispatchFetchDownloadClients: PropTypes.func.isRequired,
   items: PropTypes.arrayOf(PropTypes.object)
 };
 

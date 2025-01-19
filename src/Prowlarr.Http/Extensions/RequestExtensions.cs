@@ -1,12 +1,9 @@
 using System;
-using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using Microsoft.AspNetCore.Http;
 using NzbDrone.Common.EnvironmentInfo;
-using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Datastore;
-using NzbDrone.Core.Exceptions;
 
 namespace Prowlarr.Http.Extensions
 {
@@ -27,69 +24,6 @@ namespace Prowlarr.Http.Extensions
             }
 
             return defaultValue;
-        }
-
-        public static PagingResource<TResource> ReadPagingResourceFromRequest<TResource>(this HttpRequest request)
-        {
-            if (!int.TryParse(request.Query["PageSize"].ToString(), out var pageSize))
-            {
-                pageSize = 10;
-            }
-
-            if (!int.TryParse(request.Query["Page"].ToString(), out var page))
-            {
-                page = 1;
-            }
-
-            var pagingResource = new PagingResource<TResource>
-            {
-                PageSize = pageSize,
-                Page = page,
-                Filters = new List<PagingResourceFilter>()
-            };
-
-            if (request.Query["SortKey"].Any())
-            {
-                var sortKey = request.Query["SortKey"].ToString();
-
-                pagingResource.SortKey = sortKey;
-
-                if (request.Query["SortDirection"].Any())
-                {
-                    pagingResource.SortDirection = request.Query["SortDirection"].ToString()
-                                                          .Equals("ascending", StringComparison.InvariantCultureIgnoreCase)
-                                                       ? SortDirection.Ascending
-                                                       : SortDirection.Descending;
-                }
-            }
-
-            // For backwards compatibility with v2
-            if (request.Query["FilterKey"].Any())
-            {
-                var filter = new PagingResourceFilter
-                {
-                    Key = request.Query["FilterKey"].ToString()
-                };
-
-                if (request.Query["FilterValue"].Any())
-                {
-                    filter.Value = request.Query["FilterValue"].ToString();
-                }
-
-                pagingResource.Filters.Add(filter);
-            }
-
-            // v3 uses filters in key=value format
-            foreach (var pair in request.Query)
-            {
-                pagingResource.Filters.Add(new PagingResourceFilter
-                {
-                    Key = pair.Key,
-                    Value = pair.Value.ToString()
-                });
-            }
-
-            return pagingResource;
         }
 
         public static PagingResource<TResource> ApplyToPage<TResource, TModel>(this PagingSpec<TModel> pagingSpec, Func<PagingSpec<TModel>, PagingSpec<TModel>> function, Converter<TModel, TResource> mapper)
@@ -126,50 +60,28 @@ namespace Prowlarr.Http.Extensions
                 remoteIP = remoteIP.MapToIPv4();
             }
 
-            var remoteAddress = remoteIP.ToString();
+            return remoteIP.ToString();
+        }
 
-            // Only check if forwarded by a local network reverse proxy
-            if (remoteIP.IsLocalAddress())
+        public static string GetSource(this HttpRequest request)
+        {
+            if (request.Headers.TryGetValue("X-Prowlarr-Client", out var source))
             {
-                var realIPHeader = request.Headers["X-Real-IP"];
-                if (realIPHeader.Any())
-                {
-                    return realIPHeader.First().ToString();
-                }
-
-                var forwardedForHeader = request.Headers["X-Forwarded-For"];
-                if (forwardedForHeader.Any())
-                {
-                    // Get the first address that was forwarded by a local IP to prevent remote clients faking another proxy
-                    foreach (var forwardedForAddress in forwardedForHeader.SelectMany(v => v.Split(',')).Select(v => v.Trim()).Reverse())
-                    {
-                        if (!IPAddress.TryParse(forwardedForAddress, out remoteIP))
-                        {
-                            return remoteAddress;
-                        }
-
-                        if (!remoteIP.IsLocalAddress())
-                        {
-                            return forwardedForAddress;
-                        }
-
-                        remoteAddress = forwardedForAddress;
-                    }
-                }
+                return "Prowlarr";
             }
 
-            return remoteAddress;
+            return NzbDrone.Common.Http.UserAgentParser.ParseSource(request.Headers["User-Agent"]);
         }
 
         public static string GetHostName(this HttpRequest request)
         {
-            string ip = request.GetRemoteIP();
+            var ip = request.GetRemoteIP();
 
             try
             {
-                IPAddress myIP = IPAddress.Parse(ip);
-                IPHostEntry getIPHost = Dns.GetHostEntry(myIP);
-                List<string> compName = getIPHost.HostName.ToString().Split('.').ToList();
+                var myIP = IPAddress.Parse(ip);
+                var getIPHost = Dns.GetHostEntry(myIP);
+                var compName = getIPHost.HostName.ToString().Split('.').ToList();
                 return compName.First();
             }
             catch
@@ -193,7 +105,7 @@ namespace Prowlarr.Http.Extensions
             }
 
             // Front-End-Https: Non-standard header field used by Microsoft applications and load-balancers
-            else if (request.Headers.Where(x => x.Key == "Front-End-Https" && x.Value.FirstOrDefault() == "on").Any())
+            else if (request.Headers.Any(x => x.Key == "Front-End-Https" && x.Value.FirstOrDefault() == "on"))
             {
                 scheme = "https";
             }

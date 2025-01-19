@@ -1,14 +1,19 @@
 import { createAction } from 'redux-actions';
+import { sortDirections } from 'Helpers/Props';
+import createBulkEditItemHandler from 'Store/Actions/Creators/createBulkEditItemHandler';
+import createBulkRemoveItemHandler from 'Store/Actions/Creators/createBulkRemoveItemHandler';
 import createFetchHandler from 'Store/Actions/Creators/createFetchHandler';
 import createFetchSchemaHandler from 'Store/Actions/Creators/createFetchSchemaHandler';
 import createRemoveItemHandler from 'Store/Actions/Creators/createRemoveItemHandler';
 import createSaveProviderHandler, { createCancelSaveProviderHandler } from 'Store/Actions/Creators/createSaveProviderHandler';
 import createTestAllProvidersHandler from 'Store/Actions/Creators/createTestAllProvidersHandler';
 import createTestProviderHandler, { createCancelTestProviderHandler } from 'Store/Actions/Creators/createTestProviderHandler';
+import createSetClientSideCollectionSortReducer from 'Store/Actions/Creators/Reducers/createSetClientSideCollectionSortReducer';
 import createSetProviderFieldValueReducer from 'Store/Actions/Creators/Reducers/createSetProviderFieldValueReducer';
 import createSetSettingValueReducer from 'Store/Actions/Creators/Reducers/createSetSettingValueReducer';
 import { createThunk } from 'Store/thunks';
 import selectProviderSchema from 'Utilities/State/selectProviderSchema';
+import { set } from '../baseActions';
 
 //
 // Variables
@@ -29,6 +34,9 @@ export const DELETE_DOWNLOAD_CLIENT = 'settings/downloadClients/deleteDownloadCl
 export const TEST_DOWNLOAD_CLIENT = 'settings/downloadClients/testDownloadClient';
 export const CANCEL_TEST_DOWNLOAD_CLIENT = 'settings/downloadClients/cancelTestDownloadClient';
 export const TEST_ALL_DOWNLOAD_CLIENTS = 'settings/downloadClients/testAllDownloadClients';
+export const BULK_EDIT_DOWNLOAD_CLIENTS = 'settings/downloadClients/bulkEditDownloadClients';
+export const BULK_DELETE_DOWNLOAD_CLIENTS = 'settings/downloadClients/bulkDeleteDownloadClients';
+export const SET_MANAGE_DOWNLOAD_CLIENTS_SORT = 'settings/downloadClients/setManageDownloadClientsSort';
 
 //
 // Action Creators
@@ -43,6 +51,9 @@ export const deleteDownloadClient = createThunk(DELETE_DOWNLOAD_CLIENT);
 export const testDownloadClient = createThunk(TEST_DOWNLOAD_CLIENT);
 export const cancelTestDownloadClient = createThunk(CANCEL_TEST_DOWNLOAD_CLIENT);
 export const testAllDownloadClients = createThunk(TEST_ALL_DOWNLOAD_CLIENTS);
+export const bulkEditDownloadClients = createThunk(BULK_EDIT_DOWNLOAD_CLIENTS);
+export const bulkDeleteDownloadClients = createThunk(BULK_DELETE_DOWNLOAD_CLIENTS);
+export const setManageDownloadClientsSort = createAction(SET_MANAGE_DOWNLOAD_CLIENTS_SORT);
 
 export const setDownloadClientValue = createAction(SET_DOWNLOAD_CLIENT_VALUE, (payload) => {
   return {
@@ -77,10 +88,19 @@ export default {
     selectedSchema: {},
     isSaving: false,
     saveError: null,
+    isDeleting: false,
+    deleteError: null,
     isTesting: false,
     isTestingAll: false,
     items: [],
-    pendingChanges: {}
+    pendingChanges: {},
+    sortKey: 'name',
+    sortDirection: sortDirections.ASCENDING,
+    sortPredicates: {
+      name: function(item) {
+        return item.name.toLowerCase();
+      }
+    }
   },
 
   //
@@ -90,12 +110,38 @@ export default {
     [FETCH_DOWNLOAD_CLIENTS]: createFetchHandler(section, '/downloadclient'),
     [FETCH_DOWNLOAD_CLIENT_SCHEMA]: createFetchSchemaHandler(section, '/downloadclient/schema'),
 
-    [SAVE_DOWNLOAD_CLIENT]: createSaveProviderHandler(section, '/downloadclient'),
+    [SAVE_DOWNLOAD_CLIENT]: (getState, payload, dispatch) => {
+      // move the format tags in as a pending change
+      const state = getState();
+      const pendingChanges = state.settings.downloadClients.pendingChanges;
+      pendingChanges.categories = state.settings.downloadClientCategories.items;
+      dispatch(set({
+        section,
+        pendingChanges
+      }));
+
+      createSaveProviderHandler(section, '/downloadclient')(getState, payload, dispatch);
+    },
+
     [CANCEL_SAVE_DOWNLOAD_CLIENT]: createCancelSaveProviderHandler(section),
     [DELETE_DOWNLOAD_CLIENT]: createRemoveItemHandler(section, '/downloadclient'),
-    [TEST_DOWNLOAD_CLIENT]: createTestProviderHandler(section, '/downloadclient'),
+
+    [TEST_DOWNLOAD_CLIENT]: (getState, payload, dispatch) => {
+      const state = getState();
+      const pendingChanges = state.settings.downloadClients.pendingChanges;
+      pendingChanges.categories = state.settings.downloadClientCategories.items;
+      dispatch(set({
+        section,
+        pendingChanges
+      }));
+
+      createTestProviderHandler(section, '/downloadclient')(getState, payload, dispatch);
+    },
+
     [CANCEL_TEST_DOWNLOAD_CLIENT]: createCancelTestProviderHandler(section),
-    [TEST_ALL_DOWNLOAD_CLIENTS]: createTestAllProvidersHandler(section, '/downloadclient')
+    [TEST_ALL_DOWNLOAD_CLIENTS]: createTestAllProvidersHandler(section, '/downloadclient'),
+    [BULK_EDIT_DOWNLOAD_CLIENTS]: createBulkEditItemHandler(section, '/downloadclient/bulk'),
+    [BULK_DELETE_DOWNLOAD_CLIENTS]: createBulkRemoveItemHandler(section, '/downloadclient/bulk')
   },
 
   //
@@ -107,11 +153,15 @@ export default {
 
     [SELECT_DOWNLOAD_CLIENT_SCHEMA]: (state, { payload }) => {
       return selectProviderSchema(state, section, payload, (selectedSchema) => {
+        selectedSchema.name = selectedSchema.implementationName;
         selectedSchema.enable = true;
 
         return selectedSchema;
       });
-    }
+    },
+
+    [SET_MANAGE_DOWNLOAD_CLIENTS_SORT]: createSetClientSideCollectionSortReducer(section)
+
   }
 
 };

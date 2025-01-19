@@ -1,11 +1,12 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Net;
-using System.Text.RegularExpressions;
 using AngleSharp.Dom;
 using AngleSharp.Html.Parser;
 using AngleSharp.Xml.Parser;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NLog;
 using NzbDrone.Common.Extensions;
@@ -15,13 +16,13 @@ using NzbDrone.Core.Indexers.Exceptions;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
 
-namespace NzbDrone.Core.Indexers.Cardigann
+namespace NzbDrone.Core.Indexers.Definitions.Cardigann
 {
     public class CardigannParser : CardigannBase, IParseIndexerResponse
     {
         public Action<IDictionary<string, string>, DateTime?> CookiesUpdater { get; set; }
 
-        protected override string SiteLink => Settings?.BaseUrl ?? _definition.Links.First();
+        protected override string SiteLink => ResolveSiteLink();
 
         public CardigannParser(IConfigService configService,
                                CardigannDefinition definition,
@@ -34,21 +35,27 @@ namespace NzbDrone.Core.Indexers.Cardigann
         {
             var releases = new List<ReleaseInfo>();
 
-            _logger.Debug("Parsing");
+            _logger.Trace("Cardigann ({0}): Parsing response", _definition.Id);
 
             var indexerLogging = _configService.LogIndexerResponse;
 
-            if (indexerResponse.HttpResponse.StatusCode != HttpStatusCode.OK)
+            if (indexerResponse.HttpResponse.HasHttpRedirect && indexerResponse.HttpResponse.RedirectUrl.IsNotNullOrWhiteSpace())
             {
-                // Remove cookie cache
-                if (indexerResponse.HttpResponse.HasHttpRedirect && indexerResponse.HttpResponse.RedirectUrl
-                        .ContainsIgnoreCase("login.php"))
+                _logger.Warn("Redirected to {0} from indexer request", indexerResponse.HttpResponse.RedirectUrl);
+
+                if (indexerResponse.HttpResponse.RedirectUrl.ContainsIgnoreCase("/login.php"))
                 {
+                    // Remove cookie cache
                     CookiesUpdater(null, null);
-                    throw new IndexerException(indexerResponse, "We are being redirected to the login page. Most likely your session expired or was killed. Try testing the indexer in the settings.");
+                    throw new IndexerException(indexerResponse, "We are being redirected to the login page. Most likely your session expired or was killed. Recheck your cookie or credentials and try testing the indexer.");
                 }
 
-                throw new IndexerException(indexerResponse, $"Unexpected response status {indexerResponse.HttpResponse.StatusCode} code from API request");
+                throw new IndexerException(indexerResponse, $"Redirected to {indexerResponse.HttpResponse.RedirectUrl} from indexer request");
+            }
+
+            if (indexerResponse.HttpResponse.StatusCode != HttpStatusCode.OK)
+            {
+                throw new IndexerException(indexerResponse, $"Unexpected response status {indexerResponse.HttpResponse.StatusCode} code from indexer request");
             }
 
             var results = indexerResponse.Content;
@@ -58,14 +65,28 @@ namespace NzbDrone.Core.Indexers.Cardigann
 
             var searchUrlUri = new Uri(request.Url.FullUri);
 
-            if (request.SearchPath.Response != null && request.SearchPath.Response.Type.Equals("json"))
+            if (request.SearchPath.Response is { Type: "json" })
             {
-                if (request.SearchPath.Response != null && request.SearchPath.Response.NoResultsMessage != null && (request.SearchPath.Response.NoResultsMessage.Equals(results) || (request.SearchPath.Response.NoResultsMessage == string.Empty && results == string.Empty)))
+                if (request.SearchPath.Response != null &&
+                    request.SearchPath.Response.NoResultsMessage != null &&
+                    ((request.SearchPath.Response.NoResultsMessage.IsNotNullOrWhiteSpace() && results.Contains(request.SearchPath.Response.NoResultsMessage)) || (request.SearchPath.Response.NoResultsMessage.IsNullOrWhiteSpace() && results.IsNullOrWhiteSpace())))
                 {
                     return releases;
                 }
 
-                var parsedJson = JToken.Parse(results);
+                JToken parsedJson;
+
+                try
+                {
+                    parsedJson = JToken.Parse(results);
+                }
+                catch (JsonReaderException ex)
+                {
+                    _logger.Error(ex, "Unable to parse JSON response from indexer");
+
+                    throw new IndexerException(indexerResponse, "Error Parsing Json Response");
+                }
+
                 if (parsedJson == null)
                 {
                     throw new IndexerException(indexerResponse, "Error Parsing Json Response");
@@ -73,26 +94,53 @@ namespace NzbDrone.Core.Indexers.Cardigann
 
                 if (search.Rows.Count != null)
                 {
-                    var countVal = HandleJsonSelector(search.Rows.Count, parsedJson, variables);
-                    if (int.TryParse(countVal, out var count))
+                    try
                     {
-                        if (count < 1)
+                        var countVal = HandleJsonSelector(search.Rows.Count, parsedJson, variables);
+
+                        if (int.TryParse(countVal, out var count) && count < 1)
                         {
                             return releases;
                         }
                     }
+                    catch (Exception ex)
+                    {
+                        _logger.Trace(ex, "Failed to parse JSON rows count.");
+                    }
                 }
 
-                var rowsObj = parsedJson.SelectToken(search.Rows.Selector);
-                if (rowsObj == null)
+                var rowsArray = JsonParseRowsSelector(parsedJson, search.Rows.Selector);
+
+                if (rowsArray == null)
                 {
+                    if (search.Rows.MissingAttributeEqualsNoResults)
+                    {
+                        return releases;
+                    }
+
                     throw new IndexerException(indexerResponse, "Error Parsing Rows Selector");
                 }
 
-                foreach (var row in rowsObj.Value<JArray>())
+                if (rowsArray.Count == 0)
                 {
-                    var selObj = request.SearchPath.Response.Attribute != null ? row.SelectToken(request.SearchPath.Response.Attribute).Value<JToken>() : row;
-                    var mulRows = request.SearchPath.Response.Multiple == true ? selObj.Values<JObject>() : new List<JObject> { selObj.Value<JObject>() };
+                    return releases;
+                }
+
+                foreach (var row in rowsArray)
+                {
+                    var selObj = row;
+
+                    if (search.Rows.Attribute != null)
+                    {
+                        selObj = row.SelectToken(search.Rows.Attribute)?.Value<JToken>();
+
+                        if (selObj == null && search.Rows.MissingAttributeEqualsNoResults)
+                        {
+                            continue;
+                        }
+                    }
+
+                    var mulRows = search.Rows.Multiple ? selObj.Values<JObject>() : new List<JObject> { selObj.Value<JObject>() };
 
                     foreach (var mulRow in mulRows)
                     {
@@ -111,6 +159,7 @@ namespace NzbDrone.Core.Indexers.Cardigann
                             string value = null;
                             var variablesKey = ".Result." + fieldName;
                             var isOptional = OptionalFields.Contains(field.Key) || fieldModifiers.Contains("optional") || field.Value.Optional;
+
                             try
                             {
                                 var parentObj = mulRow;
@@ -120,37 +169,44 @@ namespace NzbDrone.Core.Indexers.Cardigann
                                 }
 
                                 value = HandleJsonSelector(field.Value, parentObj, variables, !isOptional);
-                                if (isOptional && string.IsNullOrWhiteSpace(value))
+
+                                if (isOptional && value.IsNullOrWhiteSpace())
                                 {
-                                    variables[variablesKey] = null;
-                                    continue;
+                                    var defaultValue = ApplyGoTemplateText(field.Value.Default, variables);
+
+                                    if (defaultValue.IsNullOrWhiteSpace())
+                                    {
+                                        variables[variablesKey] = null;
+                                        continue;
+                                    }
+
+                                    value = defaultValue;
                                 }
 
                                 variables[variablesKey] = ParseFields(value, fieldName, release, fieldModifiers, searchUrlUri);
                             }
                             catch (Exception ex)
                             {
-                                if (!variables.ContainsKey(variablesKey))
+                                if (!variables.ContainsKey(variablesKey) || isOptional)
                                 {
                                     variables[variablesKey] = null;
                                 }
 
                                 if (isOptional)
                                 {
-                                    variables[variablesKey] = null;
                                     continue;
                                 }
 
-                                throw new CardigannException(string.Format("Error while parsing field={0}, selector={1}, value={2}: {3}", field.Key, field.Value.Selector, value ?? "<null>", ex.Message));
+                                throw new CardigannException($"Error while parsing field={field.Key}, selector={field.Value.Selector}, value={value ?? "<null>"}: {ex.Message}", ex);
                             }
+                        }
 
-                            var filters = search.Rows.Filters;
-                            var skipRelease = ParseRowFilters(filters, release, variables, row);
+                        var filters = search.Rows.Filters;
+                        var skipRelease = ParseRowFilters(filters, release, variables, row);
 
-                            if (skipRelease)
-                            {
-                                continue;
-                            }
+                        if (skipRelease)
+                        {
+                            continue;
                         }
 
                         releases.Add(release);
@@ -159,196 +215,195 @@ namespace NzbDrone.Core.Indexers.Cardigann
             }
             else
             {
-                try
+                IHtmlCollection<IElement> rowsDom;
+
+                if (request.SearchPath.Response != null && request.SearchPath.Response.Type.Equals("xml"))
                 {
-                    IHtmlCollection<IElement> rowsDom;
+                    var searchResultParser = new XmlParser();
+                    var searchResultDocument = searchResultParser.ParseDocument(results);
 
-                    if (request.SearchPath.Response != null && request.SearchPath.Response.Type.Equals("xml"))
+                    if (search.Preprocessingfilters != null)
                     {
-                        var searchResultParser = new XmlParser();
-                        var searchResultDocument = searchResultParser.ParseDocument(results);
-
-                        if (search.Preprocessingfilters != null)
-                        {
-                            results = ApplyFilters(results, search.Preprocessingfilters, variables);
-                            searchResultDocument = searchResultParser.ParseDocument(results);
-                            _logger.Trace(string.Format("CardigannIndexer ({0}): result after preprocessingfilters: {1}", _definition.Id, results));
-                        }
-
-                        var rowsSelector = ApplyGoTemplateText(search.Rows.Selector, variables);
-                        rowsDom = searchResultDocument.QuerySelectorAll(rowsSelector);
-                    }
-                    else
-                    {
-                        var searchResultParser = new HtmlParser();
-                        var searchResultDocument = searchResultParser.ParseDocument(results);
-
-                        if (search.Preprocessingfilters != null)
-                        {
-                            results = ApplyFilters(results, search.Preprocessingfilters, variables);
-                            searchResultDocument = searchResultParser.ParseDocument(results);
-                            _logger.Trace(string.Format("CardigannIndexer ({0}): result after preprocessingfilters: {1}", _definition.Id, results));
-                        }
-
-                        var rowsSelector = ApplyGoTemplateText(search.Rows.Selector, variables);
-                        rowsDom = searchResultDocument.QuerySelectorAll(rowsSelector);
+                        results = ApplyFilters(results, search.Preprocessingfilters, variables);
+                        searchResultDocument = searchResultParser.ParseDocument(results);
+                        _logger.Trace(string.Format("CardigannIndexer ({0}): result after preprocessingfilters: {1}", _definition.Id, results));
                     }
 
-                    var rows = new List<IElement>();
-                    foreach (var rowDom in rowsDom)
+                    var rowsSelector = ApplyGoTemplateText(search.Rows.Selector, variables);
+                    rowsDom = searchResultDocument.QuerySelectorAll(rowsSelector);
+                }
+                else
+                {
+                    var searchResultParser = new HtmlParser();
+                    var searchResultDocument = searchResultParser.ParseDocument(results);
+
+                    if (search.Preprocessingfilters != null)
                     {
-                        rows.Add(rowDom);
+                        results = ApplyFilters(results, search.Preprocessingfilters, variables);
+                        searchResultDocument = searchResultParser.ParseDocument(results);
+                        _logger.Trace(string.Format("CardigannIndexer ({0}): result after preprocessingfilters: {1}", _definition.Id, results));
                     }
 
-                    // merge following rows for After selector
-                    var after = search.Rows.After;
-                    if (after > 0)
+                    var rowsSelector = ApplyGoTemplateText(search.Rows.Selector, variables);
+                    rowsDom = searchResultDocument.QuerySelectorAll(rowsSelector);
+                }
+
+                var rows = new List<IElement>();
+                foreach (var rowDom in rowsDom)
+                {
+                    rows.Add(rowDom);
+                }
+
+                // merge following rows for After selector
+                var after = search.Rows.After;
+                if (after > 0)
+                {
+                    for (var i = 0; i < rows.Count; i += 1)
                     {
-                        for (var i = 0; i < rows.Count; i += 1)
+                        var currentRow = rows[i];
+                        for (var j = 0; j < after; j += 1)
                         {
-                            var currentRow = rows[i];
-                            for (var j = 0; j < after; j += 1)
+                            var mergeRowIndex = i + j + 1;
+                            var mergeRow = rows[mergeRowIndex];
+                            var mergeNodes = new List<INode>();
+                            foreach (var node in mergeRow.ChildNodes)
                             {
-                                var mergeRowIndex = i + j + 1;
-                                var mergeRow = rows[mergeRowIndex];
-                                var mergeNodes = new List<INode>();
-                                foreach (var node in mergeRow.ChildNodes)
-                                {
-                                    mergeNodes.Add(node);
-                                }
-
-                                currentRow.Append(mergeNodes.ToArray());
+                                mergeNodes.Add(node);
                             }
 
-                            rows.RemoveRange(i + 1, after);
+                            currentRow.Append(mergeNodes.ToArray());
                         }
+
+                        rows.RemoveRange(i + 1, after);
                     }
+                }
 
-                    foreach (var row in rows)
+                foreach (var row in rows)
+                {
+                    try
                     {
-                        try
-                        {
-                            var release = new TorrentInfo();
+                        var release = new TorrentInfo();
 
-                            // Parse fields
-                            foreach (var field in search.Fields)
+                        // Parse fields
+                        foreach (var field in search.Fields)
+                        {
+                            var fieldParts = field.Key.Split('|');
+                            var fieldName = fieldParts[0];
+                            var fieldModifiers = new List<string>();
+                            for (var i = 1; i < fieldParts.Length; i++)
                             {
-                                var fieldParts = field.Key.Split('|');
-                                var fieldName = fieldParts[0];
-                                var fieldModifiers = new List<string>();
-                                for (var i = 1; i < fieldParts.Length; i++)
+                                fieldModifiers.Add(fieldParts[i]);
+                            }
+
+                            string value = null;
+                            var variablesKey = ".Result." + fieldName;
+                            var isOptional = OptionalFields.Contains(field.Key) || fieldModifiers.Contains("optional") || field.Value.Optional;
+
+                            try
+                            {
+                                value = HandleSelector(field.Value, row, variables, !isOptional);
+
+                                if (isOptional && value.IsNullOrWhiteSpace())
                                 {
-                                    fieldModifiers.Add(fieldParts[i]);
+                                    var defaultValue = ApplyGoTemplateText(field.Value.Default, variables);
+
+                                    if (defaultValue.IsNullOrWhiteSpace())
+                                    {
+                                        variables[variablesKey] = null;
+                                        continue;
+                                    }
+
+                                    value = defaultValue;
                                 }
 
-                                string value = null;
-                                var variablesKey = ".Result." + fieldName;
-                                var isOptional = OptionalFields.Contains(field.Key) || fieldModifiers.Contains("optional") || field.Value.Optional;
+                                variables[variablesKey] = ParseFields(value, fieldName, release, fieldModifiers, searchUrlUri);
+                            }
+                            catch (Exception ex)
+                            {
+                                if (!variables.ContainsKey(variablesKey) || isOptional)
+                                {
+                                    variables[variablesKey] = null;
+                                }
+
+                                if (isOptional)
+                                {
+                                    continue;
+                                }
+
+                                if (indexerLogging)
+                                {
+                                    _logger.Trace(ex, "Error while parsing field={0}, selector={1}, value={2}: {3}", field.Key, field.Value.Selector, value ?? "<null>", ex.Message);
+                                }
+                            }
+                        }
+
+                        var filters = search.Rows.Filters;
+                        var skipRelease = ParseRowFilters(filters, release, variables, row.ToHtmlPretty());
+
+                        if (skipRelease)
+                        {
+                            continue;
+                        }
+
+                        // if DateHeaders is set go through the previous rows and look for the header selector
+                        var dateHeaders = _definition.Search.Rows.Dateheaders;
+                        if (release.PublishDate == DateTime.MinValue && dateHeaders != null)
+                        {
+                            var prevRow = row.PreviousElementSibling;
+                            string value = null;
+                            if (prevRow == null)
+                            {
+                                // continue with parent
+                                var parent = row.ParentElement;
+                                if (parent != null)
+                                {
+                                    prevRow = parent.PreviousElementSibling;
+                                }
+                            }
+
+                            while (prevRow != null)
+                            {
+                                var curRow = prevRow;
+                                _logger.Debug(prevRow.OuterHtml);
                                 try
                                 {
-                                    value = HandleSelector(field.Value, row, variables, !isOptional);
-
-                                    if (isOptional && string.IsNullOrWhiteSpace(value))
-                                    {
-                                        variables[variablesKey] = null;
-                                        continue;
-                                    }
-
-                                    variables[variablesKey] = ParseFields(value, fieldName, release, fieldModifiers, searchUrlUri);
+                                    value = HandleSelector(dateHeaders, curRow);
+                                    break;
                                 }
-                                catch (Exception ex)
+                                catch (Exception)
                                 {
-                                    if (!variables.ContainsKey(variablesKey))
-                                    {
-                                        variables[variablesKey] = null;
-                                    }
-
-                                    if (OptionalFields.Contains(field.Key) || fieldModifiers.Contains("optional") || field.Value.Optional)
-                                    {
-                                        variables[variablesKey] = null;
-                                        continue;
-                                    }
-
-                                    if (indexerLogging)
-                                    {
-                                        _logger.Trace("Error while parsing field={0}, selector={1}, value={2}: {3}", field.Key, field.Value.Selector, value == null ? "<null>" : value, ex.Message);
-                                    }
+                                    // do nothing
                                 }
-                            }
 
-                            var filters = search.Rows.Filters;
-                            var skipRelease = ParseRowFilters(filters, release, variables, row);
-
-                            if (skipRelease)
-                            {
-                                continue;
-                            }
-
-                            // if DateHeaders is set go through the previous rows and look for the header selector
-                            var dateHeaders = _definition.Search.Rows.Dateheaders;
-                            if (release.PublishDate == DateTime.MinValue && dateHeaders != null)
-                            {
-                                var prevRow = row.PreviousElementSibling;
-                                string value = null;
+                                prevRow = curRow.PreviousElementSibling;
                                 if (prevRow == null)
                                 {
                                     // continue with parent
-                                    var parent = row.ParentElement;
+                                    var parent = curRow.ParentElement;
                                     if (parent != null)
                                     {
                                         prevRow = parent.PreviousElementSibling;
                                     }
                                 }
-
-                                while (prevRow != null)
-                                {
-                                    var curRow = prevRow;
-                                    _logger.Debug(prevRow.OuterHtml);
-                                    try
-                                    {
-                                        value = HandleSelector(dateHeaders, curRow);
-                                        break;
-                                    }
-                                    catch (Exception)
-                                    {
-                                        // do nothing
-                                    }
-
-                                    prevRow = curRow.PreviousElementSibling;
-                                    if (prevRow == null)
-                                    {
-                                        // continue with parent
-                                        var parent = curRow.ParentElement;
-                                        if (parent != null)
-                                        {
-                                            prevRow = parent.PreviousElementSibling;
-                                        }
-                                    }
-                                }
-
-                                if (value == null && dateHeaders.Optional == false)
-                                {
-                                    throw new CardigannException(string.Format("No date header row found for {0}", release.ToString()));
-                                }
-
-                                if (value != null)
-                                {
-                                    release.PublishDate = DateTimeUtil.FromUnknown(value);
-                                }
                             }
 
-                            releases.Add(release);
+                            if (value == null && dateHeaders.Optional == false)
+                            {
+                                throw new CardigannException(string.Format("No date header row found for {0}", release.ToString()));
+                            }
+
+                            if (value != null)
+                            {
+                                release.PublishDate = DateTimeUtil.FromUnknown(value);
+                            }
                         }
-                        catch (Exception ex)
-                        {
-                            _logger.Error(ex, "CardigannIndexer ({0}): Error while parsing row '{1}':\n\n{2}", _definition.Id, row.ToHtmlPretty());
-                        }
+
+                        releases.Add(release);
                     }
-                }
-                catch (Exception)
-                {
-                    // OnParseError(results, ex);
-                    throw;
+                    catch (Exception ex)
+                    {
+                        _logger.Error(ex, "CardigannIndexer ({0}): Error while parsing row '{1}':\n\n{2}", _definition.Id, row.ToHtmlPretty());
+                    }
                 }
             }
 
@@ -373,7 +428,7 @@ namespace NzbDrone.Core.Indexers.Cardigann
                 }
             });
 
-            _logger.Debug($"Got {releases.Count} releases");
+            _logger.Trace("Cardigann ({0}): Got {1} releases", _definition.Id, releases.Count);
 
             return releases;
         }
@@ -419,11 +474,7 @@ namespace NzbDrone.Core.Indexers.Cardigann
                     break;
                 case "comments":
                     var commentsUrl = ResolvePath(value, searchUrlUri);
-                    if (release.CommentUrl == null)
-                    {
-                        release.CommentUrl = commentsUrl.AbsoluteUri;
-                    }
-
+                    release.CommentUrl ??= commentsUrl.AbsoluteUri;
                     value = commentsUrl.ToString();
                     break;
                 case "title":
@@ -451,20 +502,54 @@ namespace NzbDrone.Core.Indexers.Cardigann
                     value = release.Description;
                     break;
                 case "category":
-                    var cats = MapTrackerCatToNewznab(value);
-                    if (cats.Any())
+                    if (fieldModifiers.Contains("noappend"))
                     {
-                        if (release.Categories == null || fieldModifiers.Contains("noappend"))
-                        {
-                            release.Categories = cats;
-                        }
-                        else
-                        {
-                            release.Categories = release.Categories.Union(cats).ToList();
-                        }
+                        _logger.Warn("The \"noappend\" modifier is deprecated. Please switch to \"default\". See the Definition Format in the Wiki for more information.");
                     }
 
-                    value = release.Categories.ToString();
+                    var cats = _categories.MapTrackerCatToNewznab(value);
+
+                    if (cats.Any())
+                    {
+                        release.Categories = release.Categories == null || fieldModifiers.Contains("noappend")
+                            ? cats
+                            : release.Categories.Union(cats).ToList();
+                    }
+
+                    if (value.IsNotNullOrWhiteSpace() && !release.Categories.Any())
+                    {
+                        _logger.Warn("[{0}] Invalid category for value: '{1}'", _definition.Id, value);
+                    }
+                    else
+                    {
+                        value = release.Categories.ToString();
+                    }
+
+                    break;
+                case "categorydesc":
+                    if (fieldModifiers.Contains("noappend"))
+                    {
+                        _logger.Warn("The \"noappend\" modifier is deprecated. Please switch to \"default\". See the Definition Format in the Wiki for more information.");
+                    }
+
+                    var catsDesc = _categories.MapTrackerCatDescToNewznab(value);
+
+                    if (catsDesc.Any())
+                    {
+                        release.Categories = release.Categories == null || fieldModifiers.Contains("noappend")
+                            ? catsDesc
+                            : release.Categories.Union(catsDesc).ToList();
+                    }
+
+                    if (value.IsNotNullOrWhiteSpace() && !release.Categories.Any())
+                    {
+                        _logger.Warn("[{0}] Invalid category for value: '{1}'", _definition.Id, value);
+                    }
+                    else
+                    {
+                        value = release.Categories.ToString();
+                    }
+
                     break;
                 case "size":
                     release.Size = ParseUtil.GetBytes(value);
@@ -500,7 +585,7 @@ namespace NzbDrone.Core.Indexers.Cardigann
                     break;
                 case "date":
                     release.PublishDate = DateTimeUtil.FromUnknown(value);
-                    value = release.PublishDate.ToString(DateTimeUtil.Rfc1123ZPattern);
+                    value = release.PublishDate.ToString(DateTimeUtil.Rfc1123ZPattern, CultureInfo.InvariantCulture);
                     break;
                 case "files":
                     release.Files = ParseUtil.CoerceInt(value);
@@ -528,29 +613,32 @@ namespace NzbDrone.Core.Indexers.Cardigann
                     break;
                 case "imdb":
                 case "imdbid":
-                    release.ImdbId = (int)ParseUtil.GetLongFromString(value);
+                    release.ImdbId = (int)ParseUtil.GetLongFromString(value).GetValueOrDefault();
                     value = release.ImdbId.ToString();
                     break;
                 case "tmdbid":
-                    var tmdbIDRegEx = new Regex(@"(\d+)", RegexOptions.Compiled);
-                    var tmdbIDMatch = tmdbIDRegEx.Match(value);
-                    var tmdbID = tmdbIDMatch.Groups[1].Value;
-                    release.TmdbId = (int)ParseUtil.CoerceLong(tmdbID);
+                    release.TmdbId = (int)ParseUtil.GetLongFromString(value).GetValueOrDefault();
                     value = release.TmdbId.ToString();
                     break;
                 case "rageid":
-                    var rageIDRegEx = new Regex(@"(\d+)", RegexOptions.Compiled);
-                    var rageIDMatch = rageIDRegEx.Match(value);
-                    var rageID = rageIDMatch.Groups[1].Value;
-                    release.TvRageId = (int)ParseUtil.CoerceLong(rageID);
+                    release.TvRageId = (int)ParseUtil.GetLongFromString(value).GetValueOrDefault();
                     value = release.TvRageId.ToString();
                     break;
                 case "tvdbid":
-                    var tvdbIdRegEx = new Regex(@"(\d+)", RegexOptions.Compiled);
-                    var tvdbIdMatch = tvdbIdRegEx.Match(value);
-                    var tvdbId = tvdbIdMatch.Groups[1].Value;
-                    release.TvdbId = (int)ParseUtil.CoerceLong(tvdbId);
+                    release.TvdbId = (int)ParseUtil.GetLongFromString(value).GetValueOrDefault();
                     value = release.TvdbId.ToString();
+                    break;
+                case "tvmazeid":
+                    release.TvMazeId = (int)ParseUtil.GetLongFromString(value).GetValueOrDefault();
+                    value = release.TvMazeId.ToString();
+                    break;
+                case "traktid":
+                    release.TraktId = (int)ParseUtil.GetLongFromString(value).GetValueOrDefault();
+                    value = release.TraktId.ToString();
+                    break;
+                case "doubanid":
+                    release.DoubanId = (int)ParseUtil.GetLongFromString(value).GetValueOrDefault();
+                    value = release.DoubanId.ToString();
                     break;
                 case "poster":
                     if (!string.IsNullOrWhiteSpace(value))
@@ -561,17 +649,39 @@ namespace NzbDrone.Core.Indexers.Cardigann
 
                     value = release.PosterUrl;
                     break;
+                case "genre":
+                    release.Genres ??= new List<string>();
+                    char[] delimiters = { ',', ' ', '/', ')', '(', '.', ';', '[', ']', '"', '|', ':' };
+                    release.Genres = release.Genres
+                        .Union(value.Split(delimiters, StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+                        .Select(x => x.Replace("_", " "))
+                        .ToList();
+                    value = string.Join(", ", release.Genres);
+                    break;
+                case "year":
+                    release.Year = ParseUtil.CoerceInt(value);
+                    value = release.Year.ToString();
+                    break;
                 case "author":
                     release.Author = value;
                     break;
                 case "booktitle":
                     release.BookTitle = value;
                     break;
+                case "publisher":
+                    release.Publisher = value;
+                    break;
                 case "artist":
                     release.Artist = value;
                     break;
                 case "album":
                     release.Album = value;
+                    break;
+                case "label":
+                    release.Label = value;
+                    break;
+                case "track":
+                    release.Track = value;
                     break;
                 default:
                     break;
@@ -591,21 +701,14 @@ namespace NzbDrone.Core.Indexers.Cardigann
                     switch (filter.Name)
                     {
                         case "andmatch":
-                            var characterLimit = -1;
-                            if (filter.Args != null)
-                            {
-                                characterLimit = int.Parse(filter.Args);
-                            }
-
-                            var queryKeywords = variables[".Keywords"] as string;
-
+                            // See IndexerBase.FilterReleasesByQuery
                             break;
                         case "strdump":
                             // for debugging
-                            _logger.Debug(string.Format("CardigannIndexer ({0}): row strdump: {1}", _definition.Id, row.ToString()));
+                            _logger.Debug($"CardigannIndexer ({_definition.Id}): row strdump: {row}");
                             break;
                         default:
-                            _logger.Error(string.Format("CardigannIndexer ({0}): Unsupported rows filter: {1}", _definition.Id, filter.Name));
+                            _logger.Error($"CardigannIndexer ({_definition.Id}): Unsupported rows filter: {filter.Name}");
                             break;
                     }
                 }

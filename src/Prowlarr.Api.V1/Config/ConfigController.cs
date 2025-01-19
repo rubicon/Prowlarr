@@ -33,8 +33,9 @@ namespace Prowlarr.Api.V1.Config
         }
 
         [RestPutById]
+        [Consumes("application/json")]
         [Produces("application/json")]
-        public virtual ActionResult<TResource> SaveConfig(TResource resource)
+        public virtual ActionResult<TResource> SaveConfig([FromBody] TResource resource)
         {
             var dictionary = resource.GetType()
                 .GetProperties(BindingFlags.Instance | BindingFlags.Public)

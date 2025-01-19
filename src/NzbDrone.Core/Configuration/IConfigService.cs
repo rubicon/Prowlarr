@@ -10,9 +10,6 @@ namespace NzbDrone.Core.Configuration
 
         bool IsDefined(string key);
 
-        //Download Client
-        string DownloadClientWorkingFolders { get; set; }
-
         //History
         int HistoryCleanupDays { get; set; }
 
@@ -25,8 +22,7 @@ namespace NzbDrone.Core.Configuration
         string TimeFormat { get; set; }
         bool ShowRelativeDates { get; set; }
         bool EnableColorImpairedMode { get; set; }
-        int MovieInfoLanguage { get; set; }
-        int UILanguage { get; set; }
+        string UILanguage { get; set; }
 
         //Internal
         string PlexClientIdentifier { get; }
@@ -36,6 +32,9 @@ namespace NzbDrone.Core.Configuration
         string HmacPassphrase { get; }
         string RijndaelSalt { get; }
         string HmacSalt { get; }
+
+        //Link Protection
+        string DownloadProtectionKey { get; }
 
         //Proxy
         bool ProxyEnabled { get; }
@@ -56,5 +55,6 @@ namespace NzbDrone.Core.Configuration
         bool LogIndexerResponse { get; set; }
 
         CertificateValidationType CertificateValidation { get; }
+        string ApplicationUrl { get; }
     }
 }

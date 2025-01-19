@@ -1,115 +1,174 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Specialized;
+using System.Globalization;
+using System.Linq;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.IndexerSearch.Definitions;
+using NzbDrone.Core.Parser;
 
-namespace NzbDrone.Core.Indexers.FileList
+namespace NzbDrone.Core.Indexers.Definitions.FileList;
+
+public class FileListRequestGenerator : IIndexerRequestGenerator
 {
-    public class FileListRequestGenerator : IIndexerRequestGenerator
+    public FileListSettings Settings { get; set; }
+    public IndexerCapabilities Capabilities { get; set; }
+    public Func<IDictionary<string, string>> GetCookies { get; set; }
+    public Action<IDictionary<string, string>, DateTime?> CookiesUpdater { get; set; }
+
+    public IndexerPageableRequestChain GetSearchRequests(TvSearchCriteria searchCriteria)
     {
-        public FileListSettings Settings { get; set; }
-        public IndexerCapabilities Capabilities { get; set; }
-        public Func<IDictionary<string, string>> GetCookies { get; set; }
-        public Action<IDictionary<string, string>, DateTime?> CookiesUpdater { get; set; }
+        var pageableRequests = new IndexerPageableRequestChain();
+        var parameters = new NameValueCollection();
 
-        public virtual IndexerPageableRequestChain GetSearchRequests(MovieSearchCriteria searchCriteria)
+        if (searchCriteria.ImdbId.IsNotNullOrWhiteSpace() || searchCriteria.SearchTerm.IsNotNullOrWhiteSpace())
         {
-            var pageableRequests = new IndexerPageableRequestChain();
+            parameters.Set("action", "search-torrents");
+
+            var searchQuery = searchCriteria.SanitizedSearchTerm.Trim();
+
+            if (DateTime.TryParseExact($"{searchCriteria.Season} {searchCriteria.Episode}", "yyyy MM/dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var showDate))
+            {
+                if (searchCriteria.ImdbId.IsNotNullOrWhiteSpace())
+                {
+                    // Skip ID searches for daily episodes
+                    return pageableRequests;
+                }
+
+                searchQuery = $"{searchQuery} {showDate:yyyy.MM.dd}".Trim();
+            }
+            else
+            {
+                if (searchCriteria.Season.HasValue)
+                {
+                    parameters.Set("season", searchCriteria.Season.ToString());
+                }
+
+                if (searchCriteria.Episode.IsNotNullOrWhiteSpace())
+                {
+                    parameters.Set("episode", searchCriteria.Episode);
+                }
+            }
 
             if (searchCriteria.ImdbId.IsNotNullOrWhiteSpace())
             {
-                pageableRequests.Add(GetRequest("search-torrents", searchCriteria.Categories, string.Format("&type=imdb&query={0}", searchCriteria.FullImdbId)));
+                parameters.Set("type", "imdb");
+                parameters.Set("query", searchCriteria.FullImdbId);
             }
             else if (searchCriteria.SearchTerm.IsNotNullOrWhiteSpace())
             {
-                var titleYearSearchQuery = string.Format("{0}", searchCriteria.SanitizedSearchTerm);
-                pageableRequests.Add(GetRequest("search-torrents", searchCriteria.Categories, string.Format("&type=name&query={0}", titleYearSearchQuery.Trim())));
+                parameters.Set("type", "name");
+                parameters.Set("query", searchQuery);
             }
-            else
-            {
-                pageableRequests.Add(GetRequest("latest-torrents", searchCriteria.Categories, ""));
-            }
-
-            return pageableRequests;
         }
 
-        public IndexerPageableRequestChain GetSearchRequests(MusicSearchCriteria searchCriteria)
+        pageableRequests.Add(GetPagedRequests(searchCriteria, parameters));
+
+        return pageableRequests;
+    }
+
+    public IndexerPageableRequestChain GetSearchRequests(MovieSearchCriteria searchCriteria)
+    {
+        var pageableRequests = new IndexerPageableRequestChain();
+        var parameters = new NameValueCollection();
+
+        if (searchCriteria.ImdbId.IsNotNullOrWhiteSpace())
         {
-            var pageableRequests = new IndexerPageableRequestChain();
-            if (searchCriteria.SearchTerm.IsNotNullOrWhiteSpace())
-            {
-                var titleYearSearchQuery = string.Format("{0}", searchCriteria.SanitizedSearchTerm);
-                pageableRequests.Add(GetRequest("search-torrents", searchCriteria.Categories, string.Format("&type=name&query={0}", titleYearSearchQuery.Trim())));
-            }
-            else
-            {
-                pageableRequests.Add(GetRequest("latest-torrents", searchCriteria.Categories, ""));
-            }
-
-            return pageableRequests;
+            parameters.Set("action", "search-torrents");
+            parameters.Set("type", "imdb");
+            parameters.Set("query", searchCriteria.FullImdbId);
         }
-
-        public IndexerPageableRequestChain GetSearchRequests(TvSearchCriteria searchCriteria)
+        else if (searchCriteria.SearchTerm.IsNotNullOrWhiteSpace())
         {
-            var pageableRequests = new IndexerPageableRequestChain();
-
-            if (searchCriteria.ImdbId.IsNotNullOrWhiteSpace())
-            {
-                pageableRequests.Add(GetRequest("search-torrents", searchCriteria.Categories, string.Format("&type=imdb&query={0}&season={1}&episode={2}", searchCriteria.FullImdbId, searchCriteria.Season, searchCriteria.Episode)));
-            }
-            else if (searchCriteria.SearchTerm.IsNotNullOrWhiteSpace())
-            {
-                var titleYearSearchQuery = string.Format("{0}", searchCriteria.SanitizedSearchTerm);
-                pageableRequests.Add(GetRequest("search-torrents", searchCriteria.Categories, string.Format("&type=name&query={0}&season={1}&episode={2}", titleYearSearchQuery.Trim(), searchCriteria.Season, searchCriteria.Episode)));
-            }
-            else
-            {
-                pageableRequests.Add(GetRequest("latest-torrents", searchCriteria.Categories, ""));
-            }
-
-            return pageableRequests;
+            parameters.Set("action", "search-torrents");
+            parameters.Set("type", "name");
+            parameters.Set("query", searchCriteria.SanitizedSearchTerm.Trim());
         }
 
-        public IndexerPageableRequestChain GetSearchRequests(BookSearchCriteria searchCriteria)
+        pageableRequests.Add(GetPagedRequests(searchCriteria, parameters));
+
+        return pageableRequests;
+    }
+
+    public IndexerPageableRequestChain GetSearchRequests(MusicSearchCriteria searchCriteria)
+    {
+        var pageableRequests = new IndexerPageableRequestChain();
+        var parameters = new NameValueCollection();
+
+        if (searchCriteria.SearchTerm.IsNotNullOrWhiteSpace())
         {
-            var pageableRequests = new IndexerPageableRequestChain();
-            if (searchCriteria.SearchTerm.IsNotNullOrWhiteSpace())
-            {
-                var titleYearSearchQuery = string.Format("{0}", searchCriteria.SanitizedSearchTerm);
-                pageableRequests.Add(GetRequest("search-torrents", searchCriteria.Categories, string.Format("&type=name&query={0}", titleYearSearchQuery.Trim())));
-            }
-            else
-            {
-                pageableRequests.Add(GetRequest("latest-torrents", searchCriteria.Categories, ""));
-            }
-
-            return pageableRequests;
+            parameters.Set("action", "search-torrents");
+            parameters.Set("type", "name");
+            parameters.Set("query", searchCriteria.SanitizedSearchTerm.Trim());
         }
 
-        public IndexerPageableRequestChain GetSearchRequests(BasicSearchCriteria searchCriteria)
+        pageableRequests.Add(GetPagedRequests(searchCriteria, parameters));
+
+        return pageableRequests;
+    }
+
+    public IndexerPageableRequestChain GetSearchRequests(BookSearchCriteria searchCriteria)
+    {
+        var pageableRequests = new IndexerPageableRequestChain();
+        var parameters = new NameValueCollection();
+
+        if (searchCriteria.SearchTerm.IsNotNullOrWhiteSpace())
         {
-            var pageableRequests = new IndexerPageableRequestChain();
-            if (searchCriteria.SearchTerm.IsNotNullOrWhiteSpace())
-            {
-                var titleYearSearchQuery = string.Format("{0}", searchCriteria.SanitizedSearchTerm);
-                pageableRequests.Add(GetRequest("search-torrents", searchCriteria.Categories, string.Format("&type=name&query={0}", titleYearSearchQuery.Trim())));
-            }
-            else
-            {
-                pageableRequests.Add(GetRequest("latest-torrents", searchCriteria.Categories, ""));
-            }
-
-            return pageableRequests;
+            parameters.Set("action", "search-torrents");
+            parameters.Set("type", "name");
+            parameters.Set("query", searchCriteria.SanitizedSearchTerm.Trim());
         }
 
-        private IEnumerable<IndexerRequest> GetRequest(string searchType, int[] categories, string parameters)
+        pageableRequests.Add(GetPagedRequests(searchCriteria, parameters));
+
+        return pageableRequests;
+    }
+
+    public IndexerPageableRequestChain GetSearchRequests(BasicSearchCriteria searchCriteria)
+    {
+        var pageableRequests = new IndexerPageableRequestChain();
+        var parameters = new NameValueCollection();
+
+        if (searchCriteria.SearchTerm.IsNotNullOrWhiteSpace())
         {
-            var categoriesQuery = string.Join(",", Capabilities.Categories.MapTorznabCapsToTrackers(categories));
-
-            var baseUrl = string.Format("{0}/api.php?action={1}&category={2}&username={3}&passkey={4}{5}", Settings.BaseUrl.TrimEnd('/'), searchType, categoriesQuery, Settings.Username.Trim(), Settings.Passkey.Trim(), parameters);
-
-            yield return new IndexerRequest(baseUrl, HttpAccept.Json);
+            parameters.Set("action", "search-torrents");
+            parameters.Set("type", "name");
+            parameters.Set("query", searchCriteria.SanitizedSearchTerm.Trim());
         }
+
+        pageableRequests.Add(GetPagedRequests(searchCriteria, parameters));
+
+        return pageableRequests;
+    }
+
+    private IEnumerable<IndexerRequest> GetPagedRequests(SearchCriteriaBase searchCriteria, NameValueCollection parameters)
+    {
+        if (parameters.Get("action") is null)
+        {
+            parameters.Set("action", "latest-torrents");
+        }
+
+        if (searchCriteria.Categories != null && searchCriteria.Categories.Any())
+        {
+            parameters.Set("category", string.Join(",", Capabilities.Categories.MapTorznabCapsToTrackers(searchCriteria.Categories).Distinct().ToList()));
+        }
+
+        if (Settings.FreeleechOnly)
+        {
+            parameters.Set("freeleech", "1");
+        }
+
+        var searchUrl = $"{Settings.BaseUrl.TrimEnd('/')}/api.php?{parameters.GetQueryString()}";
+
+        var request = new IndexerRequest(searchUrl, HttpAccept.Json)
+        {
+            HttpRequest =
+            {
+                Credentials = new BasicNetworkCredential(Settings.Username.Trim(), Settings.Passkey.Trim())
+            }
+        };
+
+        yield return request;
     }
 }

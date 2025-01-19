@@ -1,16 +1,15 @@
 using System;
 using System.Threading;
 using OpenQA.Selenium;
-using OpenQA.Selenium.Remote;
 using OpenQA.Selenium.Support.UI;
 
 namespace NzbDrone.Automation.Test.PageModel
 {
     public class PageBase
     {
-        private readonly RemoteWebDriver _driver;
+        private readonly WebDriver _driver;
 
-        public PageBase(RemoteWebDriver driver)
+        public PageBase(WebDriver driver)
         {
             _driver = driver;
             driver.Manage().Window.Maximize();
@@ -37,8 +36,12 @@ namespace NzbDrone.Automation.Test.PageModel
             {
                 try
                 {
-                    IWebElement element = d.FindElement(By.ClassName("followingBalls"));
+                    var element = d.FindElement(By.ClassName("followingBalls"));
                     return !element.Displayed;
+                }
+                catch (StaleElementReferenceException)
+                {
+                    return true;
                 }
                 catch (NoSuchElementException)
                 {

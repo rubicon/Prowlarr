@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using DryIoc;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.DataProtection;
@@ -19,12 +20,14 @@ using NzbDrone.Common.Serializer;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Instrumentation;
+using NzbDrone.Core.Lifecycle;
+using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Host.AccessControl;
-using NzbDrone.Http.Authentication;
 using NzbDrone.SignalR;
 using Prowlarr.Api.V1.System;
 using Prowlarr.Http;
 using Prowlarr.Http.Authentication;
+using Prowlarr.Http.ClientSchema;
 using Prowlarr.Http.ErrorManagement;
 using Prowlarr.Http.Frontend;
 using Prowlarr.Http.Middleware;
@@ -55,14 +58,14 @@ namespace NzbDrone.Host
 
             services.Configure<ForwardedHeadersOptions>(options =>
             {
-                options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+                options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedHost;
                 options.KnownNetworks.Clear();
                 options.KnownProxies.Clear();
             });
 
             services.AddRouting(options => options.LowercaseUrls = true);
 
-            services.AddResponseCompression();
+            services.AddResponseCompression(options => options.EnableForHttps = true);
 
             services.AddCors(options =>
             {
@@ -124,7 +127,7 @@ namespace NzbDrone.Host
 
                 c.AddSecurityRequirement(new OpenApiSecurityRequirement
                 {
-                    { apiKeyHeader, new string[] { } }
+                    { apiKeyHeader, Array.Empty<string>() }
                 });
 
                 var apikeyQuery = new OpenApiSecurityScheme
@@ -132,7 +135,7 @@ namespace NzbDrone.Host
                     Name = "apikey",
                     Type = SecuritySchemeType.ApiKey,
                     Scheme = "apiKey",
-                    Description = "Apikey passed as header",
+                    Description = "Apikey passed as query parameter",
                     In = ParameterLocation.Query,
                     Reference = new OpenApiReference
                     {
@@ -155,8 +158,10 @@ namespace NzbDrone.Host
 
                 c.AddSecurityRequirement(new OpenApiSecurityRequirement
                 {
-                    { apikeyQuery, new string[] { } }
+                    { apikeyQuery, Array.Empty<string>() }
                 });
+
+                c.DescribeAllParametersInCamelCase();
             });
 
             services
@@ -170,6 +175,8 @@ namespace NzbDrone.Host
                 .PersistKeysToFileSystem(new DirectoryInfo(Configuration["dataProtectionFolder"]));
 
             services.AddSingleton<IAuthorizationPolicyProvider, UiAuthorizationPolicyProvider>();
+            services.AddSingleton<IAuthorizationHandler, UiAuthorizationHandler>();
+
             services.AddAuthorization(options =>
             {
                 options.AddPolicy("SignalR", policy =>
@@ -203,6 +210,7 @@ namespace NzbDrone.Host
         }
 
         public void Configure(IApplicationBuilder app,
+                              IContainer container,
                               IStartupContext startupContext,
                               Lazy<IMainDatabase> mainDatabaseFactory,
                               Lazy<ILogDatabase> logDatabaseFactory,
@@ -215,11 +223,14 @@ namespace NzbDrone.Host
                               IConfigFileProvider configFileProvider,
                               IRuntimeInfo runtimeInfo,
                               IFirewallAdapter firewallAdapter,
+                              IEventAggregator eventAggregator,
                               ProwlarrErrorPipeline errorHandler)
         {
             initializeLogger.Initialize();
             appFolderFactory.Register();
             pidFileProvider.Write();
+
+            configFileProvider.EnsureDefaultConfigFile();
 
             reconfigureLogging.Reconfigure();
 
@@ -227,14 +238,21 @@ namespace NzbDrone.Host
 
             // instantiate the databases to initialize/migrate them
             _ = mainDatabaseFactory.Value;
-            _ = logDatabaseFactory.Value;
 
-            dbTarget.Register();
+            if (configFileProvider.LogDbEnabled)
+            {
+                _ = logDatabaseFactory.Value;
+                dbTarget.Register();
+            }
+
+            SchemaBuilder.Initialize(container);
 
             if (OsInfo.IsNotWindows)
             {
                 Console.CancelKeyPress += (sender, eventArgs) => NLog.LogManager.Configuration = null;
             }
+
+            eventAggregator.PublishEvent(new ApplicationStartingEvent());
 
             if (OsInfo.IsWindows && runtimeInfo.IsAdmin)
             {
@@ -259,6 +277,7 @@ namespace NzbDrone.Host
 
             app.UseMiddleware<VersionMiddleware>();
             app.UseMiddleware<UrlBaseMiddleware>(configFileProvider.UrlBase);
+            app.UseMiddleware<StartingUpMiddleware>();
             app.UseMiddleware<CacheHeaderMiddleware>();
             app.UseMiddleware<IfModifiedMiddleware>();
             app.UseMiddleware<BufferingMiddleware>(new List<string> { "/api/v1/command" });

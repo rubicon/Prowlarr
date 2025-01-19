@@ -1,20 +1,22 @@
 using System.Collections.Generic;
 using FluentValidation;
 using NzbDrone.Core.Annotations;
+using NzbDrone.Core.Indexers.Settings;
 using NzbDrone.Core.Validation;
 
-namespace NzbDrone.Core.Indexers.Cardigann
+namespace NzbDrone.Core.Indexers.Definitions.Cardigann
 {
-    public class CardigannSettingsValidator : AbstractValidator<CardigannSettings>
+    public class CardigannSettingsValidator : NoAuthSettingsValidator<CardigannSettings>
     {
         public CardigannSettingsValidator()
         {
+            RuleFor(c => c.DefinitionFile).NotEmpty();
         }
     }
 
-    public class CardigannSettings : IIndexerSettings
+    public class CardigannSettings : NoAuthTorrentBaseSettings
     {
-        private static readonly CardigannSettingsValidator Validator = new CardigannSettingsValidator();
+        private static readonly CardigannSettingsValidator Validator = new ();
 
         public CardigannSettings()
         {
@@ -24,17 +26,9 @@ namespace NzbDrone.Core.Indexers.Cardigann
         [FieldDefinition(0, Hidden = HiddenType.Hidden)]
         public string DefinitionFile { get; set; }
 
-        [FieldDefinition(2, Label = "Base Url", Type = FieldType.Select, SelectOptionsProviderAction = "getUrls", HelpText = "Select which baseurl Prowlarr will use for requests to the site")]
-        public string BaseUrl { get; set; }
-
-        [FieldDefinition(1)]
-        public IndexerBaseSettings BaseSettings { get; set; } = new IndexerBaseSettings();
-
         public Dictionary<string, object> ExtraFieldData { get; set; }
 
-        // Field 8 is used by TorznabSettings MinimumSeeders
-        // If you need to add another field here, update TorznabSettings as well and this comment
-        public virtual NzbDroneValidationResult Validate()
+        public override NzbDroneValidationResult Validate()
         {
             return new NzbDroneValidationResult(Validator.Validate(this));
         }

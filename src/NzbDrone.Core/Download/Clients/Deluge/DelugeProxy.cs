@@ -19,7 +19,7 @@ namespace NzbDrone.Core.Download.Clients.Deluge
         string[] GetAvailablePlugins(DelugeSettings settings);
         string[] GetEnabledPlugins(DelugeSettings settings);
         string[] GetAvailableLabels(DelugeSettings settings);
-        DelugeLabel GetLabelOptions(DelugeSettings settings);
+        DelugeLabel GetLabelOptions(DelugeSettings settings, string label);
         void SetTorrentLabel(string hash, string label, DelugeSettings settings);
         void SetTorrentConfiguration(string hash, string key, object value, DelugeSettings settings);
         void SetTorrentSeedingConfiguration(string hash, TorrentSeedConfiguration seedConfiguration, DelugeSettings settings);
@@ -82,7 +82,7 @@ namespace NzbDrone.Core.Download.Clients.Deluge
             var filter = new Dictionary<string, object>();
 
             // TODO: get_torrents_status returns the files as well, which starts to cause deluge timeouts when you get enough season packs.
-            //var response = ProcessRequest<Dictionary<String, DelugeTorrent>>(settings, "core.get_torrents_status", filter, new String[0]);
+            // var response = ProcessRequest<Dictionary<String, DelugeTorrent>>(settings, "core.get_torrents_status", filter, new String[0]);
             var response = ProcessRequest<DelugeUpdateUIResult>(settings, "web.update_ui", RequiredProperties, filter);
 
             return GetTorrents(response);
@@ -93,7 +93,7 @@ namespace NzbDrone.Core.Download.Clients.Deluge
             var filter = new Dictionary<string, object>();
             filter.Add("label", label);
 
-            //var response = ProcessRequest<Dictionary<String, DelugeTorrent>>(settings, "core.get_torrents_status", filter, new String[0]);
+            // var response = ProcessRequest<Dictionary<String, DelugeTorrent>>(settings, "core.get_torrents_status", filter, new String[0]);
             var response = ProcessRequest<DelugeUpdateUIResult>(settings, "web.update_ui", RequiredProperties, filter);
 
             return GetTorrents(response);
@@ -158,9 +158,9 @@ namespace NzbDrone.Core.Download.Clients.Deluge
             return response;
         }
 
-        public DelugeLabel GetLabelOptions(DelugeSettings settings)
+        public DelugeLabel GetLabelOptions(DelugeSettings settings, string label)
         {
-            var response = ProcessRequest<DelugeLabel>(settings, "label.get_options", settings.Category);
+            var response = ProcessRequest<DelugeLabel>(settings, "label.get_options", label);
 
             return response;
         }
@@ -203,7 +203,7 @@ namespace NzbDrone.Core.Download.Clients.Deluge
 
         private JsonRpcRequestBuilder BuildRequest(DelugeSettings settings)
         {
-            string url = HttpRequestBuilder.BuildBaseUrl(settings.UseSsl, settings.Host, settings.Port, settings.UrlBase);
+            var url = HttpRequestBuilder.BuildBaseUrl(settings.UseSsl, settings.Host, settings.Port, settings.UrlBase);
 
             var requestBuilder = new JsonRpcRequestBuilder(url);
             requestBuilder.LogResponseContent = true;

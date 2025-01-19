@@ -3,31 +3,29 @@ using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.Globalization;
 using System.Linq;
+using System.Net.Http;
 using System.Threading.Tasks;
 using AngleSharp.Html.Parser;
-using FluentValidation;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
-using NzbDrone.Core.Annotations;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Indexers.Exceptions;
+using NzbDrone.Core.Indexers.Settings;
 using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
-using NzbDrone.Core.Validation;
 
 namespace NzbDrone.Core.Indexers.Definitions
 {
-    public class RevolutionTT : TorrentIndexerBase<RevolutionTTSettings>
+    public class RevolutionTT : TorrentIndexerBase<UserPassTorrentBaseSettings>
     {
         public override string Name => "RevolutionTT";
 
-        public override string[] IndexerUrls => new string[] { "https://revolutiontt.me/" };
+        public override string[] IndexerUrls => new[] { "https://revolutiontt.me/" };
         public override string Description => "The Revolution has begun";
         private string LoginUrl => Settings.BaseUrl + "takelogin.php";
-        public override DownloadProtocol Protocol => DownloadProtocol.Torrent;
         public override IndexerPrivacy Privacy => IndexerPrivacy.Private;
         public override IndexerCapabilities Capabilities => SetCapabilities();
 
@@ -38,7 +36,7 @@ namespace NzbDrone.Core.Indexers.Definitions
 
         public override IIndexerRequestGenerator GetRequestGenerator()
         {
-            return new RevolutionTTRequestGenerator() { Settings = Settings, Capabilities = Capabilities };
+            return new RevolutionTTRequestGenerator { Settings = Settings, Capabilities = Capabilities };
         }
 
         public override IParseIndexerResponse GetParser()
@@ -50,29 +48,27 @@ namespace NzbDrone.Core.Indexers.Definitions
         {
             UpdateCookies(null, null);
 
+            var loginPage = await ExecuteAuth(new HttpRequest(Settings.BaseUrl + "login.php"));
+
             var requestBuilder = new HttpRequestBuilder(LoginUrl)
             {
                 LogResponseContent = true,
-                AllowAutoRedirect = true
+                AllowAutoRedirect = true,
+                Method = HttpMethod.Post
             };
 
-            var loginPage = await ExecuteAuth(new HttpRequest(Settings.BaseUrl + "login.php"));
-
-            requestBuilder.Method = HttpMethod.POST;
-            requestBuilder.PostProcess += r => r.RequestTimeout = TimeSpan.FromSeconds(15);
-            requestBuilder.SetCookies(loginPage.GetCookies());
-
             var authLoginRequest = requestBuilder
+                .SetCookies(loginPage.GetCookies())
                 .AddFormParameter("username", Settings.Username)
                 .AddFormParameter("password", Settings.Password)
-                .SetHeader("Content-Type", "multipart/form-data")
+                .SetHeader("Content-Type", "application/x-www-form-urlencoded")
                 .Build();
 
             var response = await ExecuteAuth(authLoginRequest);
 
             if (response.Content != null && response.Content.Contains("/logout.php"))
             {
-                UpdateCookies(response.GetCookies(), DateTime.Now + TimeSpan.FromDays(30));
+                UpdateCookies(response.GetCookies(), DateTime.Now.AddDays(30));
 
                 _logger.Debug("RevolutionTT authentication succeeded");
             }
@@ -84,12 +80,7 @@ namespace NzbDrone.Core.Indexers.Definitions
 
         protected override bool CheckIfLoginNeeded(HttpResponse httpResponse)
         {
-            if (httpResponse.HasHttpRedirect || !httpResponse.Content.Contains("/logout.php"))
-            {
-                return true;
-            }
-
-            return false;
+            return httpResponse.HasHttpRedirect || !httpResponse.Content.Contains("/logout.php");
         }
 
         private IndexerCapabilities SetCapabilities()
@@ -97,21 +88,21 @@ namespace NzbDrone.Core.Indexers.Definitions
             var caps = new IndexerCapabilities
             {
                 TvSearchParams = new List<TvSearchParam>
-                       {
-                           TvSearchParam.Q, TvSearchParam.Season, TvSearchParam.Ep
-                       },
+                {
+                    TvSearchParam.Q, TvSearchParam.Season, TvSearchParam.Ep
+                },
                 MovieSearchParams = new List<MovieSearchParam>
-                       {
-                           MovieSearchParam.Q, MovieSearchParam.ImdbId
-                       },
+                {
+                    MovieSearchParam.Q, MovieSearchParam.ImdbId
+                },
                 MusicSearchParams = new List<MusicSearchParam>
-                       {
-                           MusicSearchParam.Q
-                       },
+                {
+                    MusicSearchParam.Q
+                },
                 BookSearchParams = new List<BookSearchParam>
-                       {
-                           BookSearchParam.Q
-                       }
+                {
+                    BookSearchParam.Q
+                }
             };
 
             caps.Categories.AddCategoryMapping("23", NewznabStandardCategory.TVAnime);
@@ -153,12 +144,8 @@ namespace NzbDrone.Core.Indexers.Definitions
 
     public class RevolutionTTRequestGenerator : IIndexerRequestGenerator
     {
-        public RevolutionTTSettings Settings { get; set; }
+        public UserPassTorrentBaseSettings Settings { get; set; }
         public IndexerCapabilities Capabilities { get; set; }
-
-        public RevolutionTTRequestGenerator()
-        {
-        }
 
         private IEnumerable<IndexerRequest> GetPagedRequests(string term, int[] categories, string imdbId = null)
         {
@@ -191,6 +178,8 @@ namespace NzbDrone.Core.Indexers.Definitions
             var searchUrl = Settings.BaseUrl + "browse.php?" + qc.GetQueryString();
 
             var request = new IndexerRequest(searchUrl, HttpAccept.Html);
+
+            request.HttpRequest.AllowAutoRedirect = false;
 
             yield return request;
         }
@@ -246,10 +235,10 @@ namespace NzbDrone.Core.Indexers.Definitions
 
     public class RevolutionTTParser : IParseIndexerResponse
     {
-        private readonly RevolutionTTSettings _settings;
+        private readonly UserPassTorrentBaseSettings _settings;
         private readonly IndexerCapabilitiesCategories _categories;
 
-        public RevolutionTTParser(RevolutionTTSettings settings, IndexerCapabilitiesCategories categories)
+        public RevolutionTTParser(UserPassTorrentBaseSettings settings, IndexerCapabilitiesCategories categories)
         {
             _settings = settings;
             _categories = categories;
@@ -260,7 +249,7 @@ namespace NzbDrone.Core.Indexers.Definitions
             var torrentInfos = new List<TorrentInfo>();
 
             var parser = new HtmlParser();
-            var dom = parser.ParseDocument(indexerResponse.Content);
+            using var dom = parser.ParseDocument(indexerResponse.Content);
             var rows = dom.QuerySelectorAll("#torrents-table > tbody > tr");
 
             foreach (var row in rows.Skip(1))
@@ -296,7 +285,7 @@ namespace NzbDrone.Core.Indexers.Definitions
                 var category = row.QuerySelector(".br_type > a").GetAttribute("href").Replace("browse.php?cat=", string.Empty);
 
                 var qImdb = row.QuerySelector("a[href*=\"www.imdb.com/\"]");
-                var imdb = qImdb != null ? ParseUtil.GetImdbID(qImdb.GetAttribute("href").Split('/').Last()) : null;
+                var imdb = qImdb != null ? ParseUtil.GetImdbId(qImdb.GetAttribute("href").Split('/').Last()) : null;
 
                 var release = new TorrentInfo
                 {
@@ -325,42 +314,5 @@ namespace NzbDrone.Core.Indexers.Definitions
         }
 
         public Action<IDictionary<string, string>, DateTime?> CookiesUpdater { get; set; }
-    }
-
-    public class RevolutionTTSettingsValidator : AbstractValidator<RevolutionTTSettings>
-    {
-        public RevolutionTTSettingsValidator()
-        {
-            RuleFor(c => c.Username).NotEmpty();
-            RuleFor(c => c.Password).NotEmpty();
-        }
-    }
-
-    public class RevolutionTTSettings : IIndexerSettings
-    {
-        private static readonly RevolutionTTSettingsValidator Validator = new RevolutionTTSettingsValidator();
-
-        public RevolutionTTSettings()
-        {
-            Username = "";
-            Password = "";
-        }
-
-        [FieldDefinition(1, Label = "Base Url", Type = FieldType.Select, SelectOptionsProviderAction = "getUrls", HelpText = "Select which baseurl Prowlarr will use for requests to the site")]
-        public string BaseUrl { get; set; }
-
-        [FieldDefinition(2, Label = "Username", HelpText = "Site Username", Privacy = PrivacyLevel.UserName)]
-        public string Username { get; set; }
-
-        [FieldDefinition(3, Label = "Password", HelpText = "Site Password", Privacy = PrivacyLevel.Password, Type = FieldType.Password)]
-        public string Password { get; set; }
-
-        [FieldDefinition(4)]
-        public IndexerBaseSettings BaseSettings { get; set; } = new IndexerBaseSettings();
-
-        public NzbDroneValidationResult Validate()
-        {
-            return new NzbDroneValidationResult(Validator.Validate(this));
-        }
     }
 }

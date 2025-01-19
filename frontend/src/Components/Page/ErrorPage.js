@@ -7,6 +7,7 @@ function ErrorPage(props) {
   const {
     version,
     isLocalStorageSupported,
+    translationsError,
     indexersError,
     indexerStatusError,
     indexerCategoriesError,
@@ -21,6 +22,8 @@ function ErrorPage(props) {
 
   if (!isLocalStorageSupported) {
     errorMessage = 'Local Storage is not supported or disabled. A plugin or private browsing may have disabled it.';
+  } else if (translationsError) {
+    errorMessage = getErrorMessage(translationsError, 'Failed to load translations from API');
   } else if (indexersError) {
     errorMessage = getErrorMessage(indexersError, 'Failed to load indexers from API');
   } else if (indexerStatusError) {
@@ -55,6 +58,7 @@ function ErrorPage(props) {
 ErrorPage.propTypes = {
   version: PropTypes.string.isRequired,
   isLocalStorageSupported: PropTypes.bool.isRequired,
+  translationsError: PropTypes.object,
   indexersError: PropTypes.object,
   indexerStatusError: PropTypes.object,
   indexerCategoriesError: PropTypes.object,

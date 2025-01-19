@@ -11,9 +11,11 @@ namespace NzbDrone.Core.Indexers
         bool SupportsRss { get; }
         bool SupportsSearch { get; }
         bool SupportsRedirect { get; }
+        bool SupportsPagination { get; }
         IndexerCapabilities Capabilities { get; }
 
         string[] IndexerUrls { get; }
+        string[] LegacyUrls { get; }
         string Description { get; }
         Encoding Encoding { get; }
         string Language { get; }
@@ -26,7 +28,7 @@ namespace NzbDrone.Core.Indexers
         Task<IndexerPageableQueryResult> Fetch(BookSearchCriteria searchCriteria);
         Task<IndexerPageableQueryResult> Fetch(BasicSearchCriteria searchCriteria);
 
-        Task<byte[]> Download(Uri link);
+        Task<IndexerDownloadResponse> Download(Uri link);
         bool IsObsolete();
 
         IndexerCapabilities GetCapabilities();

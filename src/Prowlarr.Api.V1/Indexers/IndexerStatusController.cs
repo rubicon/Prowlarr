@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Microsoft.AspNetCore.Mvc;
 using NzbDrone.Core.Datastore.Events;
@@ -7,7 +8,6 @@ using NzbDrone.Core.ThingiProvider.Events;
 using NzbDrone.SignalR;
 using Prowlarr.Http;
 using Prowlarr.Http.REST;
-using NotImplementedException = System.NotImplementedException;
 
 namespace Prowlarr.Api.V1.Indexers
 {
@@ -23,12 +23,14 @@ namespace Prowlarr.Api.V1.Indexers
             _indexerStatusService = indexerStatusService;
         }
 
+        [NonAction]
         public override IndexerStatusResource GetResourceById(int id)
         {
             throw new NotImplementedException();
         }
 
         [HttpGet]
+        [Produces("application/json")]
         public List<IndexerStatusResource> GetAll()
         {
             return _indexerStatusService.GetBlockedProviders().ToResource();

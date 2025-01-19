@@ -1,10 +1,20 @@
 import PropTypes from 'prop-types';
 import React from 'react';
 import Alert from 'Components/Alert';
-import { kinds } from 'Helpers/Props';
+import Icon from 'Components/Icon';
+import Tooltip from 'Components/Tooltip/Tooltip';
+import { icons, kinds, tooltipPositions } from 'Helpers/Props';
 import styles from './Form.css';
 
-function Form({ children, validationErrors, validationWarnings, ...otherProps }) {
+function Form(props) {
+  const {
+    children,
+    validationErrors,
+    validationWarnings,
+    // eslint-disable-next-line no-unused-vars
+    ...otherProps
+  } = props;
+
   return (
     <div>
       {
@@ -18,6 +28,18 @@ function Form({ children, validationErrors, validationWarnings, ...otherProps })
                     kind={kinds.DANGER}
                   >
                     {error.errorMessage}
+
+                    {
+                      error.detailedDescription ?
+                        <Tooltip
+                          className={styles.details}
+                          anchor={<Icon name={icons.INFO} />}
+                          tooltip={error.detailedDescription}
+                          kind={kinds.INVERSE}
+                          position={tooltipPositions.TOP}
+                        /> :
+                        null
+                    }
                   </Alert>
                 );
               })
@@ -31,6 +53,18 @@ function Form({ children, validationErrors, validationWarnings, ...otherProps })
                     kind={kinds.WARNING}
                   >
                     {warning.errorMessage}
+
+                    {
+                      warning.detailedDescription ?
+                        <Tooltip
+                          className={styles.details}
+                          anchor={<Icon name={icons.INFO} />}
+                          tooltip={warning.detailedDescription}
+                          kind={kinds.INVERSE}
+                          position={tooltipPositions.TOP}
+                        /> :
+                        null
+                    }
                   </Alert>
                 );
               })

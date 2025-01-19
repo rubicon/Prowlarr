@@ -4,19 +4,19 @@ import createHandleActions from './Creators/createHandleActions';
 import applications from './Settings/applications';
 import appProfiles from './Settings/appProfiles';
 import development from './Settings/development';
+import downloadClientCategories from './Settings/downloadClientCategories';
 import downloadClients from './Settings/downloadClients';
 import general from './Settings/general';
 import indexerCategories from './Settings/indexerCategories';
 import indexerProxies from './Settings/indexerProxies';
-import languages from './Settings/languages';
 import notifications from './Settings/notifications';
 import ui from './Settings/ui';
 
+export * from './Settings/downloadClientCategories';
 export * from './Settings/downloadClients';
 export * from './Settings/general';
 export * from './Settings/indexerCategories';
 export * from './Settings/indexerProxies';
-export * from './Settings/languages';
 export * from './Settings/notifications';
 export * from './Settings/applications';
 export * from './Settings/appProfiles';
@@ -34,11 +34,11 @@ export const section = 'settings';
 export const defaultState = {
   advancedSettings: false,
 
+  downloadClientCategories: downloadClientCategories.defaultState,
   downloadClients: downloadClients.defaultState,
   general: general.defaultState,
   indexerCategories: indexerCategories.defaultState,
   indexerProxies: indexerProxies.defaultState,
-  languages: languages.defaultState,
   notifications: notifications.defaultState,
   applications: applications.defaultState,
   appProfiles: appProfiles.defaultState,
@@ -64,11 +64,11 @@ export const toggleAdvancedSettings = createAction(TOGGLE_ADVANCED_SETTINGS);
 // Action Handlers
 
 export const actionHandlers = handleThunks({
+  ...downloadClientCategories.actionHandlers,
   ...downloadClients.actionHandlers,
   ...general.actionHandlers,
   ...indexerCategories.actionHandlers,
   ...indexerProxies.actionHandlers,
-  ...languages.actionHandlers,
   ...notifications.actionHandlers,
   ...applications.actionHandlers,
   ...appProfiles.actionHandlers,
@@ -85,11 +85,11 @@ export const reducers = createHandleActions({
     return Object.assign({}, state, { advancedSettings: !state.advancedSettings });
   },
 
+  ...downloadClientCategories.reducers,
   ...downloadClients.reducers,
   ...general.reducers,
   ...indexerCategories.reducers,
   ...indexerProxies.reducers,
-  ...languages.reducers,
   ...notifications.reducers,
   ...applications.reducers,
   ...appProfiles.reducers,

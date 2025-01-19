@@ -11,11 +11,12 @@ namespace NzbDrone.Core.Applications
     public abstract class ApplicationBase<TSettings> : IApplication
         where TSettings : IProviderConfig, new()
     {
+        private readonly IIndexerFactory _indexerFactory;
+
         protected readonly IAppIndexerMapService _appIndexerMapService;
         protected readonly Logger _logger;
 
-        protected static readonly Regex AppIndexerRegex = new Regex(@"\/(?<indexer>\d{1,3})(?:\/(?:api)?\/?)?$",
-                                                                RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        protected static readonly Regex AppIndexerRegex = new (@"\/(?<indexer>\d{1,3})(?:\/(?:api)?\/?)?$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         public abstract string Name { get; }
 
@@ -28,9 +29,10 @@ namespace NzbDrone.Core.Applications
 
         protected TSettings Settings => (TSettings)Definition.Settings;
 
-        public ApplicationBase(IAppIndexerMapService appIndexerMapService, Logger logger)
+        public ApplicationBase(IAppIndexerMapService appIndexerMapService, IIndexerFactory indexerFactory, Logger logger)
         {
             _appIndexerMapService = appIndexerMapService;
+            _indexerFactory = indexerFactory;
             _logger = logger;
         }
 
@@ -47,8 +49,7 @@ namespace NzbDrone.Core.Applications
 
                 yield return new ApplicationDefinition
                 {
-                    Name = GetType().Name,
-                    SyncLevel = ApplicationSyncLevel.AddOnly,
+                    SyncLevel = ApplicationSyncLevel.FullSync,
                     Implementation = GetType().Name,
                     Settings = config
                 };
@@ -56,13 +57,25 @@ namespace NzbDrone.Core.Applications
         }
 
         public abstract void AddIndexer(IndexerDefinition indexer);
-        public abstract void UpdateIndexer(IndexerDefinition indexer);
+        public abstract void UpdateIndexer(IndexerDefinition indexer, bool forceSync = false);
         public abstract void RemoveIndexer(int indexerId);
         public abstract List<AppIndexerMap> GetIndexerMappings();
 
         public virtual object RequestAction(string action, IDictionary<string, string> query)
         {
             return null;
+        }
+
+        protected IndexerCapabilities GetIndexerCapabilities(IndexerDefinition indexer)
+        {
+            try
+            {
+                return _indexerFactory.GetInstance(indexer).GetCapabilities();
+            }
+            catch (Exception)
+            {
+                return indexer.Capabilities;
+            }
         }
     }
 }

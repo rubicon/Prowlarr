@@ -6,7 +6,6 @@ using NLog;
 using NzbDrone.Common.EnsureThat;
 using NzbDrone.Common.Http.Proxy;
 using NzbDrone.Core.Configuration.Events;
-using NzbDrone.Core.Languages;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Security;
 
@@ -54,8 +53,7 @@ namespace NzbDrone.Core.Configuration
 
             foreach (var configValue in configValues)
             {
-                object currentValue;
-                allWithDefaults.TryGetValue(configValue.Key, out currentValue);
+                allWithDefaults.TryGetValue(configValue.Key, out var currentValue);
                 if (currentValue == null || configValue.Value == null)
                 {
                     continue;
@@ -79,7 +77,7 @@ namespace NzbDrone.Core.Configuration
 
         public int HistoryCleanupDays
         {
-            get { return GetValueInt("HistoryCleanupDays", 365); }
+            get { return GetValueInt("HistoryCleanupDays", 30); }
             set { SetValue("HistoryCleanupDays", value); }
         }
 
@@ -88,12 +86,6 @@ namespace NzbDrone.Core.Configuration
             get { return GetValueBoolean("LogIndexerResponse", false); }
 
             set { SetValue("LogIndexerResponse", value); }
-        }
-
-        public string DownloadClientWorkingFolders
-        {
-            get { return GetValue("DownloadClientWorkingFolders", "_UNPACK_|_FAILED_"); }
-            set { SetValue("DownloadClientWorkingFolders", value); }
         }
 
         public int FirstDayOfWeek
@@ -145,16 +137,9 @@ namespace NzbDrone.Core.Configuration
             set { SetValue("EnableColorImpairedMode", value); }
         }
 
-        public int MovieInfoLanguage
+        public string UILanguage
         {
-            get { return GetValueInt("MovieInfoLanguage", (int)Language.English); }
-
-            set { SetValue("MovieInfoLanguage", value); }
-        }
-
-        public int UILanguage
-        {
-            get { return GetValueInt("UILanguage", (int)Language.English); }
+            get { return GetValue("UILanguage", "en"); }
 
             set { SetValue("UILanguage", value); }
         }
@@ -168,6 +153,8 @@ namespace NzbDrone.Core.Configuration
         public string RijndaelSalt => GetValue("RijndaelSalt", Guid.NewGuid().ToString(), true);
 
         public string HmacSalt => GetValue("HmacSalt", Guid.NewGuid().ToString(), true);
+
+        public string DownloadProtectionKey => GetValue("DownloadProtectionKey", Guid.NewGuid().ToString().Replace("-", ""), true);
 
         public bool ProxyEnabled => GetValueBoolean("ProxyEnabled", false);
 
@@ -193,6 +180,14 @@ namespace NzbDrone.Core.Configuration
 
         public CertificateValidationType CertificateValidation =>
             GetValueEnum("CertificateValidation", CertificateValidationType.Enabled);
+
+        public string ApplicationUrl => GetValue("ApplicationUrl", string.Empty);
+
+        public bool TrustCgnatIpAddresses
+        {
+            get { return GetValueBoolean("TrustCgnatIpAddresses", false); }
+            set { SetValue("TrustCgnatIpAddresses", value); }
+        }
 
         private string GetValue(string key)
         {
@@ -221,9 +216,7 @@ namespace NzbDrone.Core.Configuration
 
             EnsureCache();
 
-            string dbValue;
-
-            if (_cache.TryGetValue(key, out dbValue) && dbValue != null && !string.IsNullOrEmpty(dbValue))
+            if (_cache.TryGetValue(key, out var dbValue) && dbValue != null && !string.IsNullOrEmpty(dbValue))
             {
                 return dbValue;
             }

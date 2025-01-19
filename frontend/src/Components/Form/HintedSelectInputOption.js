@@ -33,11 +33,11 @@ function HintedSelectInputOption(props) {
         isMobile && styles.isMobile
       )}
       >
-        <div>{value}</div>
+        <div>{typeof value === 'function' ? value() : value}</div>
 
         {
           hint != null &&
-            <div className={styles.hintText}>
+            <div className={styles.hintText} title={hint}>
               {hint}
             </div>
         }
@@ -48,7 +48,7 @@ function HintedSelectInputOption(props) {
 
 HintedSelectInputOption.propTypes = {
   id: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
-  value: PropTypes.string.isRequired,
+  value: PropTypes.oneOfType([PropTypes.string, PropTypes.func]).isRequired,
   hint: PropTypes.node,
   depth: PropTypes.number,
   isSelected: PropTypes.bool.isRequired,

@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Web;
 
 namespace NzbDrone.Common.Extensions
 {
@@ -16,18 +17,26 @@ namespace NzbDrone.Common.Extensions
                 return false;
             }
 
-            Uri uri;
-            if (!Uri.TryCreate(path, UriKind.Absolute, out uri))
-            {
-                return false;
-            }
+            return Uri.TryCreate(path, UriKind.Absolute, out var uri) && uri.IsWellFormedOriginalString();
+        }
 
-            if (!uri.IsWellFormedOriginalString())
-            {
-                return false;
-            }
+        public static Uri RemoveQueryParam(this Uri url, string name)
+        {
+            var uriBuilder = new UriBuilder(url);
+            var query = HttpUtility.ParseQueryString(uriBuilder.Query);
 
-            return true;
+            query.Remove(name);
+            uriBuilder.Query = query.ToString() ?? string.Empty;
+
+            return uriBuilder.Uri;
+        }
+
+        public static string GetQueryParam(this Uri url, string name)
+        {
+            var uriBuilder = new UriBuilder(url);
+            var query = HttpUtility.ParseQueryString(uriBuilder.Query);
+
+            return query[name];
         }
     }
 }

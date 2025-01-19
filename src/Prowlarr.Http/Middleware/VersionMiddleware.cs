@@ -1,12 +1,13 @@
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using NzbDrone.Common.EnvironmentInfo;
+using Prowlarr.Http.Extensions;
 
 namespace Prowlarr.Http.Middleware
 {
     public class VersionMiddleware
     {
-        private const string VERSIONHEADER = "X-ApplicationVersion";
+        private const string VERSIONHEADER = "X-Application-Version";
 
         private readonly RequestDelegate _next;
         private readonly string _version;
@@ -19,7 +20,7 @@ namespace Prowlarr.Http.Middleware
 
         public async Task InvokeAsync(HttpContext context)
         {
-            if (!context.Response.Headers.ContainsKey(VERSIONHEADER))
+            if (context.Request.IsApiRequest() && !context.Response.Headers.ContainsKey(VERSIONHEADER))
             {
                 context.Response.Headers.Add(VERSIONHEADER, _version);
             }

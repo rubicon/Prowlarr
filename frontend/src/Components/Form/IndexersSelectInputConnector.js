@@ -1,18 +1,20 @@
-import _ from 'lodash';
+import { groupBy, map } from 'lodash';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
 import { createSelector } from 'reselect';
+import createSortedSectionSelector from 'Store/Selectors/createSortedSectionSelector';
+import sortByProp from 'Utilities/Array/sortByProp';
 import titleCase from 'Utilities/String/titleCase';
 import EnhancedSelectInput from './EnhancedSelectInput';
 
 function createMapStateToProps() {
   return createSelector(
     (state, { value }) => value,
-    (state) => state.indexers,
+    createSortedSectionSelector('indexers', sortByProp('name')),
     (value, indexers) => {
       const values = [];
-      const groupedIndexers = _(indexers.items).groupBy((x) => x.protocol).map((val, key) => ({ protocol: key, indexers: val })).value();
+      const groupedIndexers = map(groupBy(indexers.items, 'protocol'), (val, key) => ({ protocol: key, indexers: val }));
 
       groupedIndexers.forEach((element) => {
         values.push({
@@ -21,10 +23,12 @@ function createMapStateToProps() {
         });
 
         if (element.indexers && element.indexers.length > 0) {
-          element.indexers.forEach((subCat) => {
+          element.indexers.forEach((indexer) => {
             values.push({
-              key: subCat.id,
-              value: subCat.name,
+              key: indexer.id,
+              value: indexer.name,
+              hint: `(${indexer.id})`,
+              isDisabled: !indexer.enable,
               parentKey: element.protocol === 'usenet' ? -1 : -2
             });
           });
@@ -49,7 +53,6 @@ class IndexersSelectInputConnector extends Component {
   // Render
 
   render() {
-
     return (
       <EnhancedSelectInput
         {...this.props}

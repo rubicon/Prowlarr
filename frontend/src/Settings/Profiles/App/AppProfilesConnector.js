@@ -4,12 +4,12 @@ import { connect } from 'react-redux';
 import { createSelector } from 'reselect';
 import { cloneAppProfile, deleteAppProfile, fetchAppProfiles } from 'Store/Actions/settingsActions';
 import createSortedSectionSelector from 'Store/Selectors/createSortedSectionSelector';
-import sortByName from 'Utilities/Array/sortByName';
+import sortByProp from 'Utilities/Array/sortByProp';
 import AppProfiles from './AppProfiles';
 
 function createMapStateToProps() {
   return createSelector(
-    createSortedSectionSelector('settings.appProfiles', sortByName),
+    createSortedSectionSelector('settings.appProfiles', sortByProp('name')),
     (appProfiles) => appProfiles
   );
 }

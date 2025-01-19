@@ -14,7 +14,7 @@ namespace NzbDrone.Core.Datastore.Migration.Framework
 {
     public interface IMigrationController
     {
-        void Migrate(string connectionString, MigrationContext migrationContext);
+        void Migrate(string connectionString, MigrationContext migrationContext, DatabaseType databaseType);
     }
 
     public class MigrationController : IMigrationController
@@ -29,7 +29,7 @@ namespace NzbDrone.Core.Datastore.Migration.Framework
             _migrationLoggerProvider = migrationLoggerProvider;
         }
 
-        public void Migrate(string connectionString, MigrationContext migrationContext)
+        public void Migrate(string connectionString, MigrationContext migrationContext, DatabaseType databaseType)
         {
             var sw = Stopwatch.StartNew();
 
@@ -37,22 +37,23 @@ namespace NzbDrone.Core.Datastore.Migration.Framework
 
             ServiceProvider serviceProvider;
 
-            var db = connectionString.Contains(".db") ? "sqlite" : "postgres";
+            var db = databaseType == DatabaseType.SQLite ? "sqlite" : "postgres";
 
             serviceProvider = new ServiceCollection()
                 .AddLogging(b => b.AddNLog())
                 .AddFluentMigratorCore()
+                .Configure<RunnerOptions>(cfg => cfg.IncludeUntaggedMaintenances = true)
                 .ConfigureRunner(
                     builder => builder
                     .AddPostgres()
                     .AddNzbDroneSQLite()
                     .WithGlobalConnectionString(connectionString)
-                    .WithMigrationsIn(Assembly.GetExecutingAssembly()))
+                    .ScanIn(Assembly.GetExecutingAssembly()).For.All())
                 .Configure<TypeFilterOptions>(opt => opt.Namespace = "NzbDrone.Core.Datastore.Migration")
                 .Configure<ProcessorOptions>(opt =>
                 {
                     opt.PreviewOnly = false;
-                    opt.Timeout = TimeSpan.FromSeconds(60);
+                    opt.Timeout = TimeSpan.FromMinutes(10);
                 })
                 .Configure<SelectingProcessorAccessorOptions>(cfg =>
                 {

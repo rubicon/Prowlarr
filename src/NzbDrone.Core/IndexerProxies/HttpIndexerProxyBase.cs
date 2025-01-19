@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Net;
 using FluentValidation.Results;
 using NLog;
@@ -32,8 +31,8 @@ namespace NzbDrone.Core.IndexerProxies
             var failures = new List<ValidationFailure>();
 
             var request = PreRequest(_cloudRequestBuilder.Create()
-                                              .Resource("/ping")
-                                              .Build());
+                .Resource("/ping")
+                .Build());
 
             try
             {
@@ -42,14 +41,14 @@ namespace NzbDrone.Core.IndexerProxies
                 // We only care about 400 responses, other error codes can be ignored
                 if (response.StatusCode == HttpStatusCode.BadRequest)
                 {
-                    _logger.Error("Proxy Health Check failed: {0}", response.StatusCode);
-                    failures.Add(new NzbDroneValidationFailure("Host", string.Format("Failed to test proxy. StatusCode: {0}", response.StatusCode)));
+                    _logger.Error("Proxy validation failed: {0}", response.StatusCode);
+                    failures.Add(new NzbDroneValidationFailure("Host", _localizationService.GetLocalizedString("ProxyValidationBadRequest", new Dictionary<string, object> { { "statusCode", response.StatusCode } })));
                 }
             }
             catch (Exception ex)
             {
-                _logger.Error(ex, "Proxy Health Check failed");
-                failures.Add(new NzbDroneValidationFailure("Host", string.Format("Failed to test proxy: {0}", ex.Message)));
+                _logger.Error(ex, "Proxy validation failed");
+                failures.Add(new NzbDroneValidationFailure("Host", _localizationService.GetLocalizedString("ProxyValidationUnableToConnect", new Dictionary<string, object> { { "exceptionMessage", ex.Message } })));
             }
 
             return new ValidationResult(failures);

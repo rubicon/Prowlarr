@@ -14,11 +14,10 @@ namespace NzbDrone.Core.Indexers.Headphones
     public class Headphones : UsenetIndexerBase<HeadphonesSettings>
     {
         public override string Name => "Headphones VIP";
-
-        public override DownloadProtocol Protocol => DownloadProtocol.Usenet;
         public override IndexerPrivacy Privacy => IndexerPrivacy.Private;
         public override string[] IndexerUrls => new string[] { "https://indexer.codeshy.com" };
         public override string Description => "A Private Usenet indexer for music";
+        public override bool SupportsPagination => true;
         public override IndexerCapabilities Capabilities => SetCapabilities();
 
         public override IIndexerRequestGenerator GetRequestGenerator()
@@ -51,28 +50,33 @@ namespace NzbDrone.Core.Indexers.Headphones
             }
         }
 
-        public override async Task<byte[]> Download(Uri link)
+        public override async Task<IndexerDownloadResponse> Download(Uri link)
         {
             var requestBuilder = new HttpRequestBuilder(link.AbsoluteUri);
 
-            var downloadBytes = Array.Empty<byte>();
-
             var request = requestBuilder.Build();
 
-            request.AddBasicAuthentication(Settings.Username, Settings.Password);
+            request.Credentials = new BasicNetworkCredential(Settings.Username, Settings.Password);
+
+            byte[] downloadBytes;
+            long elapsedTime;
 
             try
             {
                 var response = await _httpClient.ExecuteProxiedAsync(request, Definition);
                 downloadBytes = response.ResponseData;
+                elapsedTime = response.ElapsedTime;
             }
             catch (Exception)
             {
                 _indexerStatusService.RecordFailure(Definition.Id);
                 _logger.Error("Download failed");
+                throw;
             }
 
-            return downloadBytes;
+            ValidateDownloadData(downloadBytes);
+
+            return new IndexerDownloadResponse(downloadBytes, elapsedTime);
         }
 
         private IndexerCapabilities SetCapabilities()

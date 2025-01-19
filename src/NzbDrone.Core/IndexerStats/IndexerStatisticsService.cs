@@ -8,7 +8,7 @@ namespace NzbDrone.Core.IndexerStats
 {
     public interface IIndexerStatisticsService
     {
-        CombinedStatistics IndexerStatistics(DateTime start, DateTime end);
+        CombinedStatistics IndexerStatistics(DateTime start, DateTime end, List<int> indexerIds);
     }
 
     public class IndexerStatisticsService : IIndexerStatisticsService
@@ -22,13 +22,19 @@ namespace NzbDrone.Core.IndexerStats
             _indexerFactory = indexerFactory;
         }
 
-        public CombinedStatistics IndexerStatistics(DateTime start, DateTime end)
+        public CombinedStatistics IndexerStatistics(DateTime start, DateTime end, List<int> indexerIds)
         {
             var history = _historyService.Between(start, end);
 
-            var groupedByIndexer = history.GroupBy(h => h.IndexerId);
-            var groupedByUserAgent = history.GroupBy(h => h.Data.GetValueOrDefault("source") ?? "");
-            var groupedByHost = history.GroupBy(h => h.Data.GetValueOrDefault("host") ?? "");
+            var filteredHistory = history.Where(h => indexerIds.Contains(h.IndexerId)).ToArray();
+
+            var groupedByIndexer = filteredHistory.GroupBy(h => h.IndexerId).ToArray();
+            var groupedByUserAgent = filteredHistory
+                .Where(h => h.EventType != HistoryEventType.IndexerAuth)
+                .GroupBy(h => h.Data.GetValueOrDefault("source") ?? "").ToArray();
+            var groupedByHost = filteredHistory
+                .Where(h => h.EventType != HistoryEventType.IndexerAuth)
+                .GroupBy(h => h.Data.GetValueOrDefault("host") ?? "").ToArray();
 
             var indexerStatsList = new List<IndexerStatistics>();
             var userAgentStatsList = new List<UserAgentStatistics>();
@@ -52,17 +58,16 @@ namespace NzbDrone.Core.IndexerStats
                 };
 
                 var sortedEvents = indexer.OrderBy(v => v.Date)
-                                          .ThenBy(v => v.Id)
-                                          .ToArray();
-                int temp = 0;
+                    .ThenBy(v => v.Id)
+                    .ToArray();
 
-                indexerStats.AverageResponseTime = (int)sortedEvents.Where(h => int.TryParse(h.Data.GetValueOrDefault("elapsedTime"), out temp))
-                                                                    .Select(h => temp)
-                                                                    .Average();
+                indexerStats.AverageResponseTime = CalculateAverageElapsedTime(sortedEvents.Where(h => h.EventType is HistoryEventType.IndexerRss or HistoryEventType.IndexerQuery).ToArray());
+                indexerStats.AverageGrabResponseTime = CalculateAverageElapsedTime(sortedEvents.Where(h => h.EventType is HistoryEventType.ReleaseGrabbed).ToArray());
 
                 foreach (var historyEvent in sortedEvents)
                 {
                     var failed = !historyEvent.Successful;
+
                     switch (historyEvent.EventType)
                     {
                         case HistoryEventType.IndexerQuery:
@@ -97,8 +102,6 @@ namespace NzbDrone.Core.IndexerStats
                             }
 
                             break;
-                        default:
-                            break;
                     }
                 }
 
@@ -113,8 +116,8 @@ namespace NzbDrone.Core.IndexerStats
                 };
 
                 var sortedEvents = indexer.OrderBy(v => v.Date)
-                                          .ThenBy(v => v.Id)
-                                          .ToArray();
+                    .ThenBy(v => v.Id)
+                    .ToArray();
 
                 foreach (var historyEvent in sortedEvents)
                 {
@@ -123,12 +126,9 @@ namespace NzbDrone.Core.IndexerStats
                         case HistoryEventType.IndexerRss:
                         case HistoryEventType.IndexerQuery:
                             indexerStats.NumberOfQueries++;
-
                             break;
                         case HistoryEventType.ReleaseGrabbed:
                             indexerStats.NumberOfGrabs++;
-                            break;
-                        default:
                             break;
                     }
                 }
@@ -144,8 +144,8 @@ namespace NzbDrone.Core.IndexerStats
                 };
 
                 var sortedEvents = indexer.OrderBy(v => v.Date)
-                                          .ThenBy(v => v.Id)
-                                          .ToArray();
+                    .ThenBy(v => v.Id)
+                    .ToArray();
 
                 foreach (var historyEvent in sortedEvents)
                 {
@@ -157,8 +157,6 @@ namespace NzbDrone.Core.IndexerStats
                             break;
                         case HistoryEventType.ReleaseGrabbed:
                             indexerStats.NumberOfGrabs++;
-                            break;
-                        default:
                             break;
                     }
                 }
@@ -172,6 +170,18 @@ namespace NzbDrone.Core.IndexerStats
                 UserAgentStatistics = userAgentStatsList,
                 HostStatistics = hostStatsList
             };
+        }
+
+        private static int CalculateAverageElapsedTime(History.History[] sortedEvents)
+        {
+            var temp = 0;
+
+            var elapsedTimeEvents = sortedEvents
+                .Where(h => int.TryParse(h.Data.GetValueOrDefault("elapsedTime"), out temp) && temp > 0 && h.Data.GetValueOrDefault("cached") != "1")
+                .Select(_ => temp)
+                .ToArray();
+
+            return elapsedTimeEvents.Any() ? (int)elapsedTimeEvents.Average() : 0;
         }
     }
 }

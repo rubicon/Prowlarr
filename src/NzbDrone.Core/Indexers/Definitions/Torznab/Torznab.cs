@@ -5,7 +5,6 @@ using System.Threading.Tasks;
 using FluentValidation.Results;
 using NLog;
 using NzbDrone.Common.Extensions;
-using NzbDrone.Common.Http;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Indexers.Newznab;
 using NzbDrone.Core.Messaging.Events;
@@ -23,17 +22,16 @@ namespace NzbDrone.Core.Indexers.Torznab
         public override string Description => "A Newznab-like api for torrents.";
         public override bool FollowRedirect => true;
         public override bool SupportsRedirect => true;
-
-        public override DownloadProtocol Protocol => DownloadProtocol.Torrent;
+        public override bool SupportsPagination => true;
         public override IndexerPrivacy Privacy => IndexerPrivacy.Private;
-
-        public override int PageSize => _capabilitiesProvider.GetCapabilities(Settings, Definition).LimitsDefault.Value;
         public override IndexerCapabilities Capabilities { get => GetCapabilitiesFromSettings(); protected set => base.Capabilities = value; }
+        public override int PageSize => GetProviderPageSize();
 
         public override IIndexerRequestGenerator GetRequestGenerator()
         {
             return new NewznabRequestGenerator(_capabilitiesProvider)
             {
+                Definition = Definition,
                 PageSize = PageSize,
                 Settings = Settings
             };
@@ -41,34 +39,44 @@ namespace NzbDrone.Core.Indexers.Torznab
 
         public override IParseIndexerResponse GetParser()
         {
-            return new TorznabRssParser(Settings);
+            return new TorznabRssParser(Settings, Definition, _capabilitiesProvider);
         }
 
         public string[] GetBaseUrlFromSettings()
         {
-            var baseUrl = "";
-
-            if (Definition == null || Settings == null || Settings.Categories == null)
+            if (Definition == null || Settings?.Capabilities == null)
             {
-                return new string[] { baseUrl };
+                return new[] { "" };
             }
 
-            return new string[] { Settings.BaseUrl };
+            return new[] { Settings.BaseUrl };
+        }
+
+        protected override TorznabSettings GetDefaultBaseUrl(TorznabSettings settings)
+        {
+            return settings;
         }
 
         public IndexerCapabilities GetCapabilitiesFromSettings()
         {
             var caps = new IndexerCapabilities();
 
-            if (Definition == null || Settings == null || Settings.Categories == null)
+            if (Definition == null || Settings?.Capabilities?.Categories == null)
             {
                 return caps;
             }
 
-            foreach (var category in Settings.Categories)
+            foreach (var category in Settings.Capabilities.Categories)
             {
                 caps.Categories.AddCategoryMapping(category.Name, category);
             }
+
+            caps.SupportsRawSearch = Settings?.Capabilities?.SupportsRawSearch ?? false;
+            caps.SearchParams = Settings?.Capabilities?.SearchParams ?? new List<SearchParam> { SearchParam.Q };
+            caps.TvSearchParams = Settings?.Capabilities?.TvSearchParams ?? new List<TvSearchParam>();
+            caps.MovieSearchParams = Settings?.Capabilities?.MovieSearchParams ?? new List<MovieSearchParam>();
+            caps.MusicSearchParams = Settings?.Capabilities?.MusicSearchParams ?? new List<MusicSearchParam>();
+            caps.BookSearchParams = Settings?.Capabilities?.BookSearchParams ?? new List<BookSearchParam>();
 
             return caps;
         }
@@ -83,9 +91,10 @@ namespace NzbDrone.Core.Indexers.Torznab
         {
             get
             {
-                yield return GetDefinition("AnimeTosho", GetSettings("https://feed.animetosho.org"));
-                yield return GetDefinition("HD4Free.xyz", GetSettings("http://hd4free.xyz"));
-                yield return GetDefinition("Generic Torznab", GetSettings(""));
+                yield return GetDefinition("AnimeTosho", "Anime NZB/DDL mirror", settings: GetSettings("https://feed.animetosho.org"), categories: new[] { 2020, 5070 });
+                yield return GetDefinition("MoreThanTV", "Private torrent tracker for TV / MOVIES", settings: GetSettings("https://www.morethantv.me", apiPath: @"/api/torznab"), categories: new[] { 2000, 5000 });
+                yield return GetDefinition("Torrent Network", "Torrent Network (TN) is a GERMAN Private site for TV / MOVIES / GENERAL", language: "de-DE", settings: GetSettings("https://tntracker.org", apiPath: @"/api/torznab/api"));
+                yield return GetDefinition("Generic Torznab", "A Newznab-like api for torrents.", settings: GetSettings(""));
             }
         }
 
@@ -95,19 +104,37 @@ namespace NzbDrone.Core.Indexers.Torznab
             _capabilitiesProvider = capabilitiesProvider;
         }
 
-        private IndexerDefinition GetDefinition(string name, TorznabSettings settings)
+        private IndexerDefinition GetDefinition(string name, string description, string language = null, TorznabSettings settings = null, IEnumerable<int> categories = null)
         {
+            var caps = new IndexerCapabilities();
+
+            if (categories != null)
+            {
+                foreach (var categoryId in categories)
+                {
+                    var mappedCat = NewznabStandardCategory.AllCats.FirstOrDefault(x => x.Id == categoryId);
+
+                    if (mappedCat != null)
+                    {
+                        caps.Categories.AddCategoryMapping(mappedCat.Id, mappedCat);
+                    }
+                }
+            }
+
             return new IndexerDefinition
             {
                 Enable = true,
                 Name = name,
+                Description = description,
+                Language = language ?? "en-US",
                 Implementation = GetType().Name,
                 Settings = settings,
-                Protocol = DownloadProtocol.Usenet,
+                Protocol = DownloadProtocol.Torrent,
                 SupportsRss = SupportsRss,
                 SupportsSearch = SupportsSearch,
                 SupportsRedirect = SupportsRedirect,
-                Capabilities = Capabilities
+                SupportsPagination = SupportsPagination,
+                Capabilities = caps
             };
         }
 
@@ -153,13 +180,13 @@ namespace NzbDrone.Core.Indexers.Torznab
                 }
 
                 if (capabilities.MovieSearchParams != null &&
-                    new[] { MovieSearchParam.Q, MovieSearchParam.ImdbId }.Any(v => capabilities.MovieSearchParams.Contains(v)))
+                    new[] { MovieSearchParam.Q, MovieSearchParam.ImdbId, MovieSearchParam.TmdbId, MovieSearchParam.TraktId }.Any(v => capabilities.MovieSearchParams.Contains(v)))
                 {
                     return null;
                 }
 
                 if (capabilities.TvSearchParams != null &&
-                    new[] { TvSearchParam.Q, TvSearchParam.TvdbId, TvSearchParam.RId }.Any(v => capabilities.TvSearchParams.Contains(v)) &&
+                    new[] { TvSearchParam.Q, TvSearchParam.TvdbId, TvSearchParam.ImdbId, TvSearchParam.TmdbId, TvSearchParam.RId }.Any(v => capabilities.TvSearchParams.Contains(v)) &&
                     new[] { TvSearchParam.Season, TvSearchParam.Ep }.All(v => capabilities.TvSearchParams.Contains(v)))
                 {
                     return null;
@@ -183,7 +210,19 @@ namespace NzbDrone.Core.Indexers.Torznab
             {
                 _logger.Warn(ex, "Unable to connect to indexer: " + ex.Message);
 
-                return new ValidationFailure(string.Empty, "Unable to connect to indexer, check the log for more details");
+                return new ValidationFailure(string.Empty, "Unable to connect to indexer, check the log above the ValidationFailure for more details");
+            }
+        }
+
+        private int GetProviderPageSize()
+        {
+            try
+            {
+                return _capabilitiesProvider.GetCapabilities(Settings, Definition).LimitsDefault.GetValueOrDefault(100);
+            }
+            catch
+            {
+                return 100;
             }
         }
     }

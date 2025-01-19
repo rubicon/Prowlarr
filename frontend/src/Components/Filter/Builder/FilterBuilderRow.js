@@ -3,11 +3,15 @@ import React, { Component } from 'react';
 import SelectInput from 'Components/Form/SelectInput';
 import IconButton from 'Components/Link/IconButton';
 import { filterBuilderTypes, filterBuilderValueTypes, icons } from 'Helpers/Props';
+import sortByProp from 'Utilities/Array/sortByProp';
 import AppProfileFilterBuilderRowValueConnector from './AppProfileFilterBuilderRowValueConnector';
 import BoolFilterBuilderRowValue from './BoolFilterBuilderRowValue';
+import CategoryFilterBuilderRowValue from './CategoryFilterBuilderRowValue';
 import DateFilterBuilderRowValue from './DateFilterBuilderRowValue';
 import FilterBuilderRowValueConnector from './FilterBuilderRowValueConnector';
+import HistoryEventTypeFilterBuilderRowValue from './HistoryEventTypeFilterBuilderRowValue';
 import IndexerFilterBuilderRowValueConnector from './IndexerFilterBuilderRowValueConnector';
+import PrivacyFilterBuilderRowValue from './PrivacyFilterBuilderRowValue';
 import ProtocolFilterBuilderRowValue from './ProtocolFilterBuilderRowValue';
 import TagFilterBuilderRowValueConnector from './TagFilterBuilderRowValueConnector';
 import styles from './FilterBuilderRow.css';
@@ -54,14 +58,23 @@ function getRowValueConnector(selectedFilterBuilderProp) {
     case filterBuilderValueTypes.BOOL:
       return BoolFilterBuilderRowValue;
 
+    case filterBuilderValueTypes.CATEGORY:
+      return CategoryFilterBuilderRowValue;
+
     case filterBuilderValueTypes.DATE:
       return DateFilterBuilderRowValue;
+
+    case filterBuilderValueTypes.HISTORY_EVENT_TYPE:
+      return HistoryEventTypeFilterBuilderRowValue;
 
     case filterBuilderValueTypes.INDEXER:
       return IndexerFilterBuilderRowValueConnector;
 
     case filterBuilderValueTypes.PROTOCOL:
       return ProtocolFilterBuilderRowValue;
+
+    case filterBuilderValueTypes.PRIVACY:
+      return PrivacyFilterBuilderRowValue;
 
     case filterBuilderValueTypes.TAG:
       return TagFilterBuilderRowValueConnector;
@@ -194,11 +207,13 @@ class FilterBuilderRow extends Component {
     const selectedFilterBuilderProp = this.selectedFilterBuilderProp;
 
     const keyOptions = filterBuilderProps.map((availablePropFilter) => {
+      const { name, label } = availablePropFilter;
+
       return {
-        key: availablePropFilter.name,
-        value: availablePropFilter.label
+        key: name,
+        value: typeof label === 'function' ? label() : label
       };
-    });
+    }).sort(sortByProp('value'));
 
     const ValueComponent = getRowValueConnector(selectedFilterBuilderProp);
 

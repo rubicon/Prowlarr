@@ -19,10 +19,16 @@
   margin-bottom: 16px;
 }
 
-.alert {
+.notice {
   composes: alert from '~Components/Alert.css';
 
   margin-bottom: 20px;
+}
+
+.alert {
+  composes: alert from '~Components/Alert.css';
+
+  text-align: center;
 }
 
 .scroller {
@@ -52,22 +58,54 @@
 }
 
 @media only screen and (max-width: $breakpointSmall) {
+  .filterInput {
+    margin-bottom: 5px;
+  }
+
   .alert {
     display: none;
   }
 
   .filterRow {
-    flex-direction: column;
+    display: block;
+    margin-bottom: 10px;
   }
 
   .filterContainer {
     margin-right: 0;
-    margin-bottom: 12px;
+    margin-bottom: 5px;
   }
 
   .scroller {
     margin-right: -30px;
     margin-bottom: -30px;
     margin-left: -30px;
+  }
+}
+
+@media only screen and (min-width: $breakpointSmall) {
+  .filterContainer {
+    max-width: 50%;
+  }
+}
+
+.modalFooter {
+  composes: modalFooter from '~Components/Modal/ModalFooter.css';
+
+  justify-content: space-between;
+}
+
+.available {
+  font-weight: bold;
+}
+
+@media only screen and (max-width: $breakpointExtraSmall) {
+  .modalFooter {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .available {
+    display: none;
   }
 }

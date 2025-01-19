@@ -20,6 +20,8 @@ function HostSettings(props) {
     bindAddress,
     port,
     urlBase,
+    instanceName,
+    applicationUrl,
     enableSsl,
     sslPort,
     sslCertPath,
@@ -69,6 +71,37 @@ function HostSettings(props) {
           helpTextWarning={translate('RestartRequiredHelpTextWarning')}
           onChange={onInputChange}
           {...urlBase}
+        />
+      </FormGroup>
+
+      <FormGroup
+        advancedSettings={advancedSettings}
+        isAdvanced={true}
+      >
+        <FormLabel>{translate('InstanceName')}</FormLabel>
+
+        <FormInputGroup
+          type={inputTypes.TEXT}
+          name="instanceName"
+          helpText={translate('InstanceNameHelpText')}
+          helpTextWarning={translate('RestartRequiredHelpTextWarning')}
+          onChange={onInputChange}
+          {...instanceName}
+        />
+      </FormGroup>
+
+      <FormGroup
+        advancedSettings={advancedSettings}
+        isAdvanced={true}
+      >
+        <FormLabel>{translate('ApplicationURL')}</FormLabel>
+
+        <FormInputGroup
+          type={inputTypes.TEXT}
+          name="applicationUrl"
+          helpText={translate('ApplicationUrlHelpText')}
+          onChange={onInputChange}
+          {...applicationUrl}
         />
       </FormGroup>
 

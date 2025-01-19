@@ -42,14 +42,18 @@ namespace NzbDrone.Core.Applications
             return enabledClients.ToList();
         }
 
+        protected override List<ApplicationDefinition> Active()
+        {
+            return base.Active().Where(c => c.Enable).ToList();
+        }
+
         private IEnumerable<IApplication> FilterBlockedApplications(IEnumerable<IApplication> applications)
         {
             var blockedApplications = _applicationStatusService.GetBlockedProviders().ToDictionary(v => v.ProviderId, v => v);
 
             foreach (var application in applications)
             {
-                ApplicationStatus blockedApplicationStatus;
-                if (blockedApplications.TryGetValue(application.Definition.Id, out blockedApplicationStatus))
+                if (blockedApplications.TryGetValue(application.Definition.Id, out var blockedApplicationStatus) && blockedApplicationStatus.DisabledTill.HasValue)
                 {
                     _logger.Debug("Temporarily ignoring application {0} till {1} due to recent failures.", application.Definition.Name, blockedApplicationStatus.DisabledTill.Value.ToLocalTime());
                     continue;
@@ -63,9 +67,18 @@ namespace NzbDrone.Core.Applications
         {
             var result = base.Test(definition);
 
-            if ((result == null || result.IsValid) && definition.Id != 0)
+            if (definition.Id == 0)
+            {
+                return result;
+            }
+
+            if (result == null || result.IsValid)
             {
                 _applicationStatusService.RecordSuccess(definition.Id);
+            }
+            else
+            {
+                _applicationStatusService.RecordFailure(definition.Id);
             }
 
             return result;

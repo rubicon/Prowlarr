@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Net.Http;
 using System.Text;
 using NzbDrone.Common.Extensions;
 
@@ -20,12 +21,14 @@ namespace NzbDrone.Common.Http
         public Dictionary<string, string> Segments { get; private set; }
         public HttpHeader Headers { get; private set; }
         public bool SuppressHttpError { get; set; }
+        public IEnumerable<HttpStatusCode> SuppressHttpErrorStatusCodes { get; set; }
+        public bool LogHttpError { get; set; }
         public bool UseSimplifiedUserAgent { get; set; }
         public bool AllowAutoRedirect { get; set; }
         public bool ConnectionKeepAlive { get; set; }
         public TimeSpan RateLimit { get; set; }
         public bool LogResponseContent { get; set; }
-        public NetworkCredential NetworkCredential { get; set; }
+        public ICredentials NetworkCredential { get; set; }
         public Dictionary<string, string> Cookies { get; private set; }
         public bool StoreRequestCookie { get; set; }
         public bool StoreResponseCookie { get; set; }
@@ -37,7 +40,7 @@ namespace NzbDrone.Common.Http
         {
             BaseUrl = new HttpUri(baseUrl);
             ResourceUrl = string.Empty;
-            Method = HttpMethod.GET;
+            Method = HttpMethod.Get;
             Encoding = Encoding.UTF8;
             QueryParams = new List<KeyValuePair<string, string>>();
             SuffixQueryParams = new List<KeyValuePair<string, string>>();
@@ -45,6 +48,7 @@ namespace NzbDrone.Common.Http
             Headers = new HttpHeader();
             Cookies = new Dictionary<string, string>();
             FormData = new List<HttpFormData>();
+            LogHttpError = true;
         }
 
         public HttpRequestBuilder(bool useHttps, string host, int port, string urlBase = null)
@@ -105,6 +109,8 @@ namespace NzbDrone.Common.Http
             request.Method = Method;
             request.Encoding = Encoding;
             request.SuppressHttpError = SuppressHttpError;
+            request.SuppressHttpErrorStatusCodes = SuppressHttpErrorStatusCodes;
+            request.LogHttpError = LogHttpError;
             request.UseSimplifiedUserAgent = UseSimplifiedUserAgent;
             request.AllowAutoRedirect = AllowAutoRedirect;
             request.StoreRequestCookie = StoreRequestCookie;
@@ -112,13 +118,7 @@ namespace NzbDrone.Common.Http
             request.ConnectionKeepAlive = ConnectionKeepAlive;
             request.RateLimit = RateLimit;
             request.LogResponseContent = LogResponseContent;
-
-            if (NetworkCredential != null)
-            {
-                var authInfo = NetworkCredential.UserName + ":" + NetworkCredential.Password;
-                authInfo = Convert.ToBase64String(Encoding.GetEncoding("ISO-8859-1").GetBytes(authInfo));
-                request.Headers.Set("Authorization", "Basic " + authInfo);
-            }
+            request.Credentials = NetworkCredential;
 
             foreach (var header in Headers)
             {
@@ -211,7 +211,7 @@ namespace NzbDrone.Common.Http
                         }
                         else
                         {
-                            summary.AppendFormat("\r\n{0}={1}", formData.Name, Encoding.UTF8.GetString(formData.ContentData));
+                            summary.AppendFormat("\r\n{0}={1}", formData.Name, Encoding.GetString(formData.ContentData));
                         }
                     }
 
@@ -231,9 +231,9 @@ namespace NzbDrone.Common.Http
             }
             else
             {
-                var parameters = FormData.Select(v => string.Format("{0}={1}", v.Name, Uri.EscapeDataString(Encoding.UTF8.GetString(v.ContentData))));
+                var parameters = FormData.Select(v => string.Format("{0}={1}", v.Name, Uri.EscapeDataString(Encoding.GetString(v.ContentData))));
                 var urlencoded = string.Join("&", parameters);
-                var body = Encoding.UTF8.GetBytes(urlencoded);
+                var body = Encoding.GetBytes(urlencoded);
 
                 request.Headers.ContentType = "application/x-www-form-urlencoded";
                 request.SetContent(body);
@@ -275,7 +275,7 @@ namespace NzbDrone.Common.Http
 
         public virtual HttpRequestBuilder Post()
         {
-            Method = HttpMethod.POST;
+            Method = HttpMethod.Post;
 
             return this;
         }
@@ -397,7 +397,7 @@ namespace NzbDrone.Common.Http
 
         public virtual HttpRequestBuilder AddFormParameter(string key, object value)
         {
-            if (Method != HttpMethod.POST)
+            if (Method != HttpMethod.Post)
             {
                 throw new NotSupportedException("HttpRequest Method must be POST to add FormParameter.");
             }
@@ -405,7 +405,7 @@ namespace NzbDrone.Common.Http
             FormData.Add(new HttpFormData
             {
                 Name = key,
-                ContentData = Encoding.UTF8.GetBytes(Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture))
+                ContentData = Encoding.GetBytes(Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture))
             });
 
             return this;
@@ -413,7 +413,7 @@ namespace NzbDrone.Common.Http
 
         public virtual HttpRequestBuilder AddFormUpload(string name, string fileName, byte[] data, string contentType = "application/octet-stream")
         {
-            if (Method != HttpMethod.POST)
+            if (Method != HttpMethod.Post)
             {
                 throw new NotSupportedException("HttpRequest Method must be POST to add FormUpload.");
             }

@@ -15,6 +15,7 @@ namespace NzbDrone.Core.IndexerStats
         public int IndexerId { get; set; }
         public string IndexerName { get; set; }
         public int AverageResponseTime { get; set; }
+        public int AverageGrabResponseTime { get; set; }
         public int NumberOfQueries { get; set; }
         public int NumberOfGrabs { get; set; }
         public int NumberOfRssQueries { get; set; }

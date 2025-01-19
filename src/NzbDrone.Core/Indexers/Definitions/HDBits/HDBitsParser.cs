@@ -3,16 +3,19 @@ using System.Collections.Generic;
 using System.Net;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.Indexers.Exceptions;
 using NzbDrone.Core.Parser.Model;
 
-namespace NzbDrone.Core.Indexers.HDBits
+namespace NzbDrone.Core.Indexers.Definitions.HDBits
 {
     public class HDBitsParser : IParseIndexerResponse
     {
         private readonly HDBitsSettings _settings;
         private readonly IndexerCapabilitiesCategories _categories;
+
+        private readonly List<int> _halfLeechMediums = new () { (int)HdBitsMedium.Bluray, (int)HdBitsMedium.Remux, (int)HdBitsMedium.Capture };
 
         public HDBitsParser(HDBitsSettings settings, IndexerCapabilitiesCategories categories)
         {
@@ -22,50 +25,56 @@ namespace NzbDrone.Core.Indexers.HDBits
 
         public IList<ReleaseInfo> ParseResponse(IndexerResponse indexerResponse)
         {
-            var torrentInfos = new List<ReleaseInfo>();
+            var indexerHttpResponse = indexerResponse.HttpResponse;
 
-            if (indexerResponse.HttpResponse.StatusCode != HttpStatusCode.OK)
+            if (indexerHttpResponse.StatusCode == HttpStatusCode.Forbidden)
             {
-                throw new IndexerException(indexerResponse,
-                    "Unexpected response status {0} code from API request",
-                    indexerResponse.HttpResponse.StatusCode);
+                throw new RequestLimitReachedException(indexerResponse, "HDBits Query Limit Reached. Please try again later.");
+            }
+
+            if (indexerHttpResponse.StatusCode != HttpStatusCode.OK)
+            {
+                throw new IndexerException(indexerResponse, "Unexpected response status {0} code from indexer request", indexerHttpResponse.StatusCode);
             }
 
             var jsonResponse = JsonConvert.DeserializeObject<HDBitsResponse>(indexerResponse.Content);
 
             if (jsonResponse.Status != StatusCode.Success)
             {
-                throw new IndexerException(indexerResponse,
-                    "HDBits API request returned status code {0}: {1}",
-                    jsonResponse.Status,
-                    jsonResponse.Message ?? string.Empty);
+                throw new IndexerException(indexerResponse, "HDBits API request returned status code {0}: {1}", jsonResponse.Status, jsonResponse.Message ?? string.Empty);
             }
 
-            var responseData = jsonResponse.Data as JArray;
-            if (responseData == null)
+            if (jsonResponse.Data is not JArray responseData)
             {
-                throw new IndexerException(indexerResponse,
-                    "Indexer API call response missing result data");
+                throw new IndexerException(indexerResponse, "Indexer API call response missing result data");
             }
+
+            var releaseInfos = new List<ReleaseInfo>();
 
             var queryResults = responseData.ToObject<TorrentQueryResponse[]>();
 
             foreach (var result in queryResults)
             {
-                var id = result.Id;
-                var internalRelease = result.TypeOrigin == 1 ? true : false;
+                // Skip non-freeleech results when freeleech only is set
+                if (_settings.FreeleechOnly && result.FreeLeech != "yes")
+                {
+                    continue;
+                }
 
-                var flags = new List<IndexerFlag>();
+                var id = result.Id;
+                var internalRelease = result.TypeOrigin == 1;
+
+                var flags = new HashSet<IndexerFlag>();
 
                 if (internalRelease)
                 {
                     flags.Add(IndexerFlag.Internal);
                 }
 
-                torrentInfos.Add(new HDBitsInfo()
+                releaseInfos.Add(new HDBitsInfo
                 {
-                    Guid = string.Format("HDBits-{0}", id),
-                    Title = result.Name,
+                    Guid = $"HDBits-{id}",
+                    Title = GetTitle(result),
                     Size = result.Size,
                     Categories = _categories.MapTrackerCatToNewznab(result.TypeCategory.ToString()),
                     InfoHash = result.Hash,
@@ -77,18 +86,54 @@ namespace NzbDrone.Core.Indexers.HDBits
                     Peers = result.Leechers + result.Seeders,
                     PublishDate = result.Added.ToUniversalTime(),
                     Internal = internalRelease,
+                    Year = result.ImdbInfo?.Year ?? 0,
                     ImdbId = result.ImdbInfo?.Id ?? 0,
                     TvdbId = result.TvdbInfo?.Id ?? 0,
-                    DownloadVolumeFactor = result.FreeLeech == "yes" ? 0 : 1,
-                    UploadVolumeFactor = 1,
+                    DownloadVolumeFactor = GetDownloadVolumeFactor(result),
+                    UploadVolumeFactor = GetUploadVolumeFactor(result),
                     IndexerFlags = flags
                 });
             }
 
-            return torrentInfos.ToArray();
+            return releaseInfos.ToArray();
         }
 
         public Action<IDictionary<string, string>, DateTime?> CookiesUpdater { get; set; }
+
+        private string GetTitle(TorrentQueryResponse item)
+        {
+            return _settings.UseFilenames && item.FileName.IsNotNullOrWhiteSpace()
+                ? item.FileName.Replace(".torrent", "", StringComparison.InvariantCultureIgnoreCase)
+                : item.Name;
+        }
+
+        private double GetDownloadVolumeFactor(TorrentQueryResponse item)
+        {
+            if (item.FreeLeech == "yes")
+            {
+                return 0;
+            }
+
+            // 100% Neutral Leech: all XXX content.
+            if (item.TypeCategory == 7)
+            {
+                return 0;
+            }
+
+            // 50% Free Leech: all full discs, remuxes, captures and all internal encodes, also all TV and Documentary content.
+            if (_halfLeechMediums.Contains(item.TypeMedium) || item.TypeOrigin == 1 || item.TypeCategory is 2 or 3)
+            {
+                return 0.5;
+            }
+
+            return 1;
+        }
+
+        private static double GetUploadVolumeFactor(TorrentQueryResponse item)
+        {
+            // 100% Neutral Leech: all XXX content.
+            return item.TypeCategory == 7 ? 0 : 1;
+        }
 
         private string GetDownloadUrl(string torrentId)
         {

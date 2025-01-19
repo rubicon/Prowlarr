@@ -4,9 +4,10 @@ using System.Linq;
 using FluentValidation.Results;
 using NLog;
 using NzbDrone.Common.Disk;
-using NzbDrone.Common.Http;
+using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Download.Clients.Flood.Models;
+using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.ThingiProvider;
 
@@ -18,22 +19,27 @@ namespace NzbDrone.Core.Download.Clients.Flood
 
         public Flood(IFloodProxy proxy,
                         ITorrentFileInfoReader torrentFileInfoReader,
-                        IHttpClient httpClient,
+                        ISeedConfigProvider seedConfigProvider,
                         IConfigService configService,
                         IDiskProvider diskProvider,
                         Logger logger)
-            : base(torrentFileInfoReader, httpClient, configService, diskProvider, logger)
+            : base(torrentFileInfoReader, seedConfigProvider, configService, diskProvider, logger)
         {
             _proxy = proxy;
         }
 
-        private static IEnumerable<string> HandleTags(ReleaseInfo release, FloodSettings settings)
+        private static IEnumerable<string> HandleTags(ReleaseInfo release, FloodSettings settings, string mappedCategory)
         {
             var result = new HashSet<string>();
 
             if (settings.Tags.Any())
             {
                 result.UnionWith(settings.Tags);
+            }
+
+            if (mappedCategory != null)
+            {
+                result.Add(mappedCategory);
             }
 
             if (settings.AdditionalTags.Any())
@@ -51,22 +57,23 @@ namespace NzbDrone.Core.Download.Clients.Flood
                 }
             }
 
-            return result;
+            return result.Where(t => t.IsNotNullOrWhiteSpace());
         }
 
         public override string Name => "Flood";
+        public override bool SupportsCategories => true;
         public override ProviderMessage Message => new ProviderMessage("Prowlarr is unable to remove torrents that have finished seeding when using Flood", ProviderMessageType.Warning);
 
-        protected override string AddFromTorrentFile(ReleaseInfo release, string hash, string filename, byte[] fileContent)
+        protected override string AddFromTorrentFile(TorrentInfo release, string hash, string filename, byte[] fileContent)
         {
-            _proxy.AddTorrentByFile(Convert.ToBase64String(fileContent), HandleTags(release, Settings), Settings);
+            _proxy.AddTorrentByFile(Convert.ToBase64String(fileContent), HandleTags(release, Settings, GetCategoryForRelease(release)), Settings);
 
             return hash;
         }
 
-        protected override string AddFromMagnetLink(ReleaseInfo release, string hash, string magnetLink)
+        protected override string AddFromMagnetLink(TorrentInfo release, string hash, string magnetLink)
         {
-            _proxy.AddTorrentByUrl(magnetLink, HandleTags(release, Settings), Settings);
+            _proxy.AddTorrentByUrl(magnetLink, HandleTags(release, Settings, GetCategoryForRelease(release)), Settings);
 
             return hash;
         }
@@ -87,7 +94,7 @@ namespace NzbDrone.Core.Download.Clients.Flood
             }
         }
 
-        protected override string AddFromTorrentLink(ReleaseInfo release, string hash, string torrentLink)
+        protected override string AddFromTorrentLink(TorrentInfo release, string hash, string torrentLink)
         {
             throw new NotImplementedException();
         }

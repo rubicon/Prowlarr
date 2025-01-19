@@ -6,6 +6,7 @@ using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Common.Processes;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Lifecycle;
+using NzbDrone.Core.Messaging;
 using NzbDrone.Core.Messaging.Events;
 
 namespace NzbDrone.Host
@@ -55,6 +56,7 @@ namespace NzbDrone.Host
 
         private void OnAppStarted()
         {
+            _runtimeInfo.IsStarting = false;
             _runtimeInfo.IsExiting = false;
 
             if (!_startupContext.Flags.Contains(StartupContext.NO_BROWSER)
@@ -99,6 +101,7 @@ namespace NzbDrone.Host
             return args;
         }
 
+        [EventHandleOrder(EventHandleOrder.Last)]
         public void Handle(ApplicationShutdownRequested message)
         {
             if (!_runtimeInfo.IsWindowsService)

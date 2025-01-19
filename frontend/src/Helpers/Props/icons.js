@@ -15,7 +15,8 @@ import {
   faHdd as farHdd,
   faKeyboard as farKeyboard,
   faObjectGroup as farObjectGroup,
-  faObjectUngroup as farObjectUngroup
+  faObjectUngroup as farObjectUngroup,
+  faSquare as farSquare
 } from '@fortawesome/free-regular-svg-icons';
 //
 // Solid
@@ -38,11 +39,11 @@ import {
   faCaretDown as fasCaretDown,
   faCheck as fasCheck,
   faCheckCircle as fasCheckCircle,
-  faCheckSquare as fasCheckSquare,
   faChevronCircleDown as fasChevronCircleDown,
   faChevronCircleRight as fasChevronCircleRight,
   faChevronCircleUp as fasChevronCircleUp,
   faCircle as fasCircle,
+  faCircleDown as fasCircleDown,
   faCloud as fasCloud,
   faCloudDownloadAlt as fasCloudDownloadAlt,
   faCog as fasCog,
@@ -72,8 +73,10 @@ import {
   faLanguage as fasLanguage,
   faLaptop as fasLaptop,
   faLevelUpAlt as fasLevelUpAlt,
+  faListCheck as fasListCheck,
   faLocationArrow as fasLocationArrow,
   faLock as fasLock,
+  faMagnet as fasMagnet,
   faMedkit as fasMedkit,
   faMinus as fasMinus,
   faMusic as fasMusic,
@@ -95,6 +98,8 @@ import {
   faSortDown as fasSortDown,
   faSortUp as fasSortUp,
   faSpinner as fasSpinner,
+  faSquareCheck as fasSquareCheck,
+  faSquareMinus as fasSquareMinus,
   faStop as fasStop,
   faSync as fasSync,
   faTable as fasTable,
@@ -135,8 +140,9 @@ export const CARET_DOWN = fasCaretDown;
 export const CHECK = fasCheck;
 export const CHECK_INDETERMINATE = fasMinus;
 export const CHECK_CIRCLE = fasCheckCircle;
-export const CHECK_SQUARE = fasCheckSquare;
+export const CHECK_SQUARE = fasSquareCheck;
 export const CIRCLE = fasCircle;
+export const CIRCLE_DOWN = fasCircleDown;
 export const CIRCLE_OUTLINE = farCircle;
 export const CLEAR = fasTrashAlt;
 export const CLIPBOARD = fasCopy;
@@ -178,6 +184,8 @@ export const INTERACTIVE = fasUser;
 export const KEYBOARD = farKeyboard;
 export const LOCK = fasLock;
 export const LOGOUT = fasSignOutAlt;
+export const MAGNET = fasMagnet;
+export const MANAGE = fasListCheck;
 export const MEDIA_INFO = farFileInvoice;
 export const MISSING = fasExclamationTriangle;
 export const MONITORED = fasBookmark;
@@ -220,6 +228,8 @@ export const SORT_ASCENDING = fasSortUp;
 export const SORT_DESCENDING = fasSortDown;
 export const SPINNER = fasSpinner;
 export const STUDIO = fasBuilding;
+export const SQUARE = farSquare;
+export const SQUARE_MINUS = fasSquareMinus;
 export const SUBTRACT = fasMinus;
 export const SYSTEM = fasLaptop;
 export const TABLE = fasTable;

@@ -19,6 +19,7 @@ using NzbDrone.Core.Validation;
 
 namespace NzbDrone.Core.Indexers.Definitions
 {
+    [Obsolete("Site has shutdown")]
     public class BinSearch : UsenetIndexerBase<BinSearchSettings>
     {
         public override string Name => "BinSearch";
@@ -26,9 +27,9 @@ namespace NzbDrone.Core.Indexers.Definitions
         public override string Description => "The binary Usenet search engine";
         public override string Language => "en-US";
         public override Encoding Encoding => Encoding.UTF8;
-        public override DownloadProtocol Protocol => DownloadProtocol.Usenet;
         public override IndexerPrivacy Privacy => IndexerPrivacy.Public;
         public override bool SupportsRss => false;
+        public override bool SupportsPagination => true;
         public override IndexerCapabilities Capabilities => SetCapabilities();
 
         public BinSearch(IIndexerHttpClient httpClient, IEventAggregator eventAggregator, IIndexerStatusService indexerStatusService, IConfigService configService, IValidateNzbs nzbValidationService, Logger logger)
@@ -76,10 +77,6 @@ namespace NzbDrone.Core.Indexers.Definitions
     {
         public IndexerCapabilities Capabilities { get; set; }
         public BinSearchSettings Settings { get; set; }
-
-        public BinSearchRequestGenerator()
-        {
-        }
 
         private IEnumerable<IndexerRequest> GetPagedRequests(string term, SearchCriteriaBase searchCriteria)
         {
@@ -165,7 +162,7 @@ namespace NzbDrone.Core.Indexers.Definitions
             var releaseInfos = new List<ReleaseInfo>();
 
             var parser = new HtmlParser();
-            var doc = parser.ParseDocument(indexerResponse.Content);
+            using var doc = parser.ParseDocument(indexerResponse.Content);
             var rows = doc.QuerySelectorAll("table.xMenuT > tbody > tr").Skip(1);
             foreach (var row in rows)
             {
@@ -219,7 +216,7 @@ namespace NzbDrone.Core.Indexers.Definitions
         public string BaseUrl { get; set; }
 
         [FieldDefinition(2)]
-        public IndexerBaseSettings BaseSettings { get; set; } = new IndexerBaseSettings();
+        public IndexerBaseSettings BaseSettings { get; set; } = new ();
 
         public NzbDroneValidationResult Validate()
         {

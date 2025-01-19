@@ -30,8 +30,9 @@ namespace Prowlarr.Api.V1.CustomFilters
         }
 
         [RestPostById]
+        [Consumes("application/json")]
         [Produces("application/json")]
-        public ActionResult<CustomFilterResource> AddCustomFilter(CustomFilterResource resource)
+        public ActionResult<CustomFilterResource> AddCustomFilter([FromBody] CustomFilterResource resource)
         {
             var customFilter = _customFilterService.Add(resource.ToModel());
 
@@ -39,17 +40,20 @@ namespace Prowlarr.Api.V1.CustomFilters
         }
 
         [RestPutById]
+        [Consumes("application/json")]
         [Produces("application/json")]
-        public ActionResult<CustomFilterResource> UpdateCustomFilter(CustomFilterResource resource)
+        public ActionResult<CustomFilterResource> UpdateCustomFilter([FromBody] CustomFilterResource resource)
         {
             _customFilterService.Update(resource.ToModel());
             return Accepted(resource.Id);
         }
 
         [RestDeleteById]
-        public void DeleteCustomResource(int id)
+        public object DeleteCustomResource(int id)
         {
             _customFilterService.Delete(id);
+
+            return new { };
         }
     }
 }

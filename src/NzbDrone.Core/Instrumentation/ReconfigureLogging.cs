@@ -1,7 +1,8 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using System.Linq;
 using NLog;
 using NLog.Config;
+using NLog.Targets;
 using NLog.Targets.Syslog;
 using NLog.Targets.Syslog.Settings;
 using NzbDrone.Common.EnvironmentInfo;
@@ -44,19 +45,21 @@ namespace NzbDrone.Core.Instrumentation
 
             if (_configFileProvider.SyslogServer.IsNotNullOrWhiteSpace())
             {
-                SetSyslogParameters(_configFileProvider.SyslogServer, _configFileProvider.SyslogPort, minimumLogLevel);
+                var syslogLevel = LogLevel.FromString(_configFileProvider.SyslogLevel);
+                SetSyslogParameters(_configFileProvider.SyslogServer, _configFileProvider.SyslogPort, syslogLevel);
             }
 
             var rules = LogManager.Configuration.LoggingRules;
 
-            //Console
+            // Console
+            ReconfigureConsole();
             SetMinimumLogLevel(rules, "consoleLogger", minimumConsoleLogLevel);
 
             //Log Files
             SetMinimumLogLevel(rules, "appFileInfo", minimumLogLevel <= LogLevel.Info ? LogLevel.Info : LogLevel.Off);
             SetMinimumLogLevel(rules, "appFileDebug", minimumLogLevel <= LogLevel.Debug ? LogLevel.Debug : LogLevel.Off);
             SetMinimumLogLevel(rules, "appFileTrace", minimumLogLevel <= LogLevel.Trace ? LogLevel.Trace : LogLevel.Off);
-            SetLogRotation();
+            ReconfigureFile();
 
             //Log Sql
             SqlBuilderExtensions.LogSql = _configFileProvider.LogSql;
@@ -90,11 +93,12 @@ namespace NzbDrone.Core.Instrumentation
             }
         }
 
-        private void SetLogRotation()
+        private void ReconfigureFile()
         {
             foreach (var target in LogManager.Configuration.AllTargets.OfType<NzbDroneFileTarget>())
             {
                 target.MaxArchiveFiles = _configFileProvider.LogRotate;
+                target.ArchiveAboveSize = _configFileProvider.LogSizeLimit.Megabytes();
             }
         }
 
@@ -108,6 +112,22 @@ namespace NzbDrone.Core.Instrumentation
             }
         }
 
+        private void ReconfigureConsole()
+        {
+            var consoleTarget = LogManager.Configuration.AllTargets.OfType<ColoredConsoleTarget>().FirstOrDefault();
+
+            if (consoleTarget != null)
+            {
+                var format = _configFileProvider.ConsoleLogFormat;
+
+                consoleTarget.Layout = format switch
+                {
+                    ConsoleLogFormat.Clef => NzbDroneLogger.ClefLogLayout,
+                    _ => NzbDroneLogger.ConsoleLogLayout
+                };
+            }
+        }
+
         private void SetSyslogParameters(string syslogServer, int syslogPort, LogLevel minimumLogLevel)
         {
             var syslogTarget = new SyslogTarget();
@@ -116,9 +136,9 @@ namespace NzbDrone.Core.Instrumentation
             syslogTarget.MessageSend.Protocol = ProtocolType.Udp;
             syslogTarget.MessageSend.Udp.Port = syslogPort;
             syslogTarget.MessageSend.Udp.Server = syslogServer;
-            syslogTarget.MessageSend.Udp.ReconnectInterval = 500;
+            syslogTarget.MessageSend.Retry.ConstantBackoff.BaseDelay = 500;
             syslogTarget.MessageCreation.Rfc = RfcNumber.Rfc5424;
-            syslogTarget.MessageCreation.Rfc5424.AppName = "Prowlarr";
+            syslogTarget.MessageCreation.Rfc5424.AppName = _configFileProvider.InstanceName;
 
             var loggingRule = new LoggingRule("*", minimumLogLevel, syslogTarget);
 

@@ -40,6 +40,7 @@ namespace NzbDrone.Core.Download
             base.SetProviderCharacteristics(provider, definition);
 
             definition.Protocol = provider.Protocol;
+            definition.SupportsCategories = provider.SupportsCategories;
         }
 
         public List<IDownloadClient> DownloadHandlingEnabled(bool filterBlockedClients = true)
@@ -56,12 +57,11 @@ namespace NzbDrone.Core.Download
 
         private IEnumerable<IDownloadClient> FilterBlockedClients(IEnumerable<IDownloadClient> clients)
         {
-            var blockedIndexers = _downloadClientStatusService.GetBlockedProviders().ToDictionary(v => v.ProviderId, v => v);
+            var blockedClients = _downloadClientStatusService.GetBlockedProviders().ToDictionary(v => v.ProviderId, v => v);
 
             foreach (var client in clients)
             {
-                DownloadClientStatus downloadClientStatus;
-                if (blockedIndexers.TryGetValue(client.Definition.Id, out downloadClientStatus))
+                if (blockedClients.TryGetValue(client.Definition.Id, out var downloadClientStatus) && downloadClientStatus.DisabledTill.HasValue)
                 {
                     _logger.Debug("Temporarily ignoring download client {0} till {1} due to recent failures.", client.Definition.Name, downloadClientStatus.DisabledTill.Value.ToLocalTime());
                     continue;
@@ -75,9 +75,18 @@ namespace NzbDrone.Core.Download
         {
             var result = base.Test(definition);
 
-            if ((result == null || result.IsValid) && definition.Id != 0)
+            if (definition.Id == 0)
+            {
+                return result;
+            }
+
+            if (result == null || result.IsValid)
             {
                 _downloadClientStatusService.RecordSuccess(definition.Id);
+            }
+            else
+            {
+                _downloadClientStatusService.RecordFailure(definition.Id);
             }
 
             return result;

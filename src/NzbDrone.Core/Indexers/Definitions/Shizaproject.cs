@@ -1,31 +1,30 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Specialized;
+using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
-using FluentValidation;
 using Newtonsoft.Json;
 using NLog;
 using NzbDrone.Common.Http;
-using NzbDrone.Core.Annotations;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Indexers.Exceptions;
+using NzbDrone.Core.Indexers.Settings;
 using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
-using NzbDrone.Core.Validation;
 
 namespace NzbDrone.Core.Indexers.Definitions
 {
-    public class Shizaproject : TorrentIndexerBase<ShizaprojectSettings>
+    [Obsolete("Site unusable due to lack of new releases")]
+    public class Shizaproject : TorrentIndexerBase<NoAuthTorrentBaseSettings>
     {
         public override string Name => "ShizaProject";
-        public override string[] IndexerUrls => new string[] { "https://shiza-project.com/" };
-        public override string Description => "Shizaproject is russian anime voiceover group and eponymous anime tracker.";
+        public override string[] IndexerUrls => new[] { "https://shiza-project.com/" };
+        public override string Description => "ShizaProject Tracker is a Public RUSSIAN tracker and release group for ANIME";
         public override string Language => "ru-RU";
         public override Encoding Encoding => Encoding.UTF8;
-        public override DownloadProtocol Protocol => DownloadProtocol.Torrent;
         public override IndexerPrivacy Privacy => IndexerPrivacy.Public;
         public override IndexerCapabilities Capabilities => SetCapabilities();
 
@@ -36,7 +35,7 @@ namespace NzbDrone.Core.Indexers.Definitions
 
         public override IIndexerRequestGenerator GetRequestGenerator()
         {
-            return new ShizaprojectRequestGenerator() { Settings = Settings, Capabilities = Capabilities };
+            return new ShizaprojectRequestGenerator { Settings = Settings, Capabilities = Capabilities };
         }
 
         public override IParseIndexerResponse GetParser()
@@ -49,32 +48,30 @@ namespace NzbDrone.Core.Indexers.Definitions
             var caps = new IndexerCapabilities
             {
                 TvSearchParams = new List<TvSearchParam>
-                                   {
-                                       TvSearchParam.Q, TvSearchParam.Season, TvSearchParam.Ep
-                                   },
+                {
+                    TvSearchParam.Q, TvSearchParam.Season, TvSearchParam.Ep
+                },
                 MovieSearchParams = new List<MovieSearchParam>
-                                   {
-                                       MovieSearchParam.Q
-                                   }
+                {
+                    MovieSearchParam.Q
+                }
             };
+
             caps.Categories.AddCategoryMapping(1, NewznabStandardCategory.TVAnime, "TV");
             caps.Categories.AddCategoryMapping(2, NewznabStandardCategory.TVAnime, "TV_SPECIAL");
             caps.Categories.AddCategoryMapping(3, NewznabStandardCategory.TVAnime, "ONA");
             caps.Categories.AddCategoryMapping(4, NewznabStandardCategory.TVAnime, "OVA");
             caps.Categories.AddCategoryMapping(5, NewznabStandardCategory.Movies, "MOVIE");
             caps.Categories.AddCategoryMapping(6, NewznabStandardCategory.Movies, "SHORT_MOVIE");
+
             return caps;
         }
     }
 
     public class ShizaprojectRequestGenerator : IIndexerRequestGenerator
     {
-        public ShizaprojectSettings Settings { get; set; }
+        public NoAuthTorrentBaseSettings Settings { get; set; }
         public IndexerCapabilities Capabilities { get; set; }
-
-        public ShizaprojectRequestGenerator()
-        {
-        }
 
         private IEnumerable<IndexerRequest> GetPagedRequests(string term, int[] categories)
         {
@@ -99,6 +96,7 @@ namespace NzbDrone.Core.Indexers.Definitions
                             publishedAt
                             slug
                             torrents {
+                                synopsis
                                 downloaded
                                 seeders
                                 leechers
@@ -118,7 +116,7 @@ namespace NzbDrone.Core.Indexers.Definitions
             var queryCollection = new NameValueCollection
             {
                 { "query", query.Replace('\n', ' ').Trim() },
-                { "variables", Newtonsoft.Json.JsonConvert.SerializeObject(variables) }
+                { "variables", JsonConvert.SerializeObject(variables) }
             };
 
             var requestUrl = string.Format("{0}/graphql?", Settings.BaseUrl.TrimEnd('/')) + queryCollection.GetQueryString();
@@ -172,34 +170,35 @@ namespace NzbDrone.Core.Indexers.Definitions
 
     public class ShizaprojectParser : IParseIndexerResponse
     {
-        private readonly ShizaprojectSettings _settings;
+        private readonly NoAuthTorrentBaseSettings _settings;
         private readonly IndexerCapabilitiesCategories _categories;
 
-        public ShizaprojectParser(ShizaprojectSettings settings, IndexerCapabilitiesCategories categories)
+        public ShizaprojectParser(NoAuthTorrentBaseSettings settings, IndexerCapabilitiesCategories categories)
         {
             _settings = settings;
             _categories = categories;
         }
 
-        private string composeTitle(ShizaprojectNode n, ShizaprojectTorrent tr)
+        private string ComposeTitle(ShizaprojectNode n, ShizaprojectTorrent tr)
         {
-            var title = string.Format("{0} / {1}", n.Name, n.OriginalName);
-            foreach (var tl in n.AlternativeNames)
+            var allNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
-                title += " / " + tl;
+                n.Name,
+                n.OriginalName
+            };
+            allNames.UnionWith(n.AlternativeNames.ToHashSet());
+
+            var title = $"{string.Join(" / ", allNames)} {tr.Synopsis}";
+
+            if (tr.VideoQualities.Length > 0)
+            {
+                title += $" [{string.Join(" ", tr.VideoQualities)}]";
             }
 
-            title += " [";
-            foreach (var q in tr.VideoQualities)
-            {
-                title += " " + q;
-            }
-
-            title += " ]";
             return title;
         }
 
-        private DateTime getActualPublishDate(ShizaprojectNode n, ShizaprojectTorrent t)
+        private DateTime GetActualPublishDate(ShizaprojectNode n, ShizaprojectTorrent t)
         {
             if (n.PublishedAt == null)
             {
@@ -211,7 +210,7 @@ namespace NzbDrone.Core.Indexers.Definitions
             }
         }
 
-        private string getResolution(string[] qualities)
+        private string GetResolution(string[] qualities)
         {
             var resPrefix = "RESOLUTION_";
             var res = Array.Find(qualities, s => s.StartsWith(resPrefix));
@@ -240,7 +239,7 @@ namespace NzbDrone.Core.Indexers.Definitions
                 {
                     var torrentInfo = new TorrentInfo
                     {
-                        Title = composeTitle(e.Node, tr),
+                        Title = ComposeTitle(e.Node, tr),
                         InfoUrl = string.Format("{0}/releases/{1}/", _settings.BaseUrl.TrimEnd('/'), e.Node.Slug),
                         DownloadVolumeFactor = 0,
                         UploadVolumeFactor = 1,
@@ -248,12 +247,12 @@ namespace NzbDrone.Core.Indexers.Definitions
                         Peers = tr.Leechers + tr.Seeders,
                         Grabs = tr.Downloaded,
                         Categories = _categories.MapTrackerCatDescToNewznab(e.Node.Type),
-                        PublishDate = getActualPublishDate(e.Node, tr),
+                        PublishDate = GetActualPublishDate(e.Node, tr),
                         Guid = tr.File.Url,
                         DownloadUrl = tr.File.Url,
                         MagnetUrl = tr.MagnetUri,
                         Size = tr.Size,
-                        Resolution = getResolution(tr.VideoQualities)
+                        Resolution = GetResolution(tr.VideoQualities)
                     };
 
                     torrentInfos.Add(torrentInfo);
@@ -264,29 +263,6 @@ namespace NzbDrone.Core.Indexers.Definitions
         }
 
         public Action<IDictionary<string, string>, DateTime?> CookiesUpdater { get; set; }
-    }
-
-    public class ShizaprojectSettingsValidator : AbstractValidator<ShizaprojectSettings>
-    {
-        public ShizaprojectSettingsValidator()
-        {
-        }
-    }
-
-    public class ShizaprojectSettings : IIndexerSettings
-    {
-        private static readonly ShizaprojectSettingsValidator Validator = new ShizaprojectSettingsValidator();
-
-        [FieldDefinition(1, Label = "Base Url", Type = FieldType.Select, SelectOptionsProviderAction = "getUrls", HelpText = "Select which baseurl Prowlarr will use for requests to the site")]
-        public string BaseUrl { get; set; }
-
-        [FieldDefinition(2)]
-        public IndexerBaseSettings BaseSettings { get; set; } = new IndexerBaseSettings();
-
-        public NzbDroneValidationResult Validate()
-        {
-            return new NzbDroneValidationResult(Validator.Validate(this));
-        }
     }
 
     public class ShizaprojectReleasesResponse
@@ -339,6 +315,7 @@ namespace NzbDrone.Core.Indexers.Definitions
 
     public class ShizaprojectTorrent
     {
+        public string Synopsis { get; set; }
         public int Downloaded { get; set; }
         public int Seeders { get; set; }
         public int Leechers { get; set; }

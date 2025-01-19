@@ -7,6 +7,7 @@ namespace NzbDrone.Core.Download
 {
     public interface IDownloadClient : IProvider
     {
+        bool SupportsCategories { get; }
         DownloadProtocol Protocol { get; }
         Task<string> Download(ReleaseInfo release, bool redirect, IIndexer indexer);
     }

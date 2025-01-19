@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Linq;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Download;
@@ -8,6 +9,8 @@ namespace NzbDrone.Core.HealthCheck.Checks
 {
     [CheckOn(typeof(ProviderUpdatedEvent<IDownloadClient>))]
     [CheckOn(typeof(ProviderDeletedEvent<IDownloadClient>))]
+    [CheckOn(typeof(ProviderBulkUpdatedEvent<IDownloadClient>))]
+    [CheckOn(typeof(ProviderBulkDeletedEvent<IDownloadClient>))]
     [CheckOn(typeof(ProviderStatusChangedEvent<IDownloadClient>))]
     public class DownloadClientStatusCheck : HealthCheckBase
     {
@@ -37,10 +40,19 @@ namespace NzbDrone.Core.HealthCheck.Checks
 
             if (backOffProviders.Count == enabledProviders.Count)
             {
-                return new HealthCheck(GetType(), HealthCheckResult.Error, _localizationService.GetLocalizedString("DownloadClientStatusCheckAllClientMessage"), "#download-clients-are-unavailable-due-to-failures");
+                return new HealthCheck(GetType(),
+                    HealthCheckResult.Error,
+                    _localizationService.GetLocalizedString("DownloadClientStatusAllClientHealthCheckMessage"),
+                    "#download-clients-are-unavailable-due-to-failures");
             }
 
-            return new HealthCheck(GetType(), HealthCheckResult.Warning, string.Format(_localizationService.GetLocalizedString("DownloadClientStatusCheckSingleClientMessage"), string.Join(", ", backOffProviders.Select(v => v.Provider.Definition.Name))), "#download-clients-are-unavailable-due-to-failures");
+            return new HealthCheck(GetType(),
+                HealthCheckResult.Warning,
+                _localizationService.GetLocalizedString("DownloadClientStatusSingleClientHealthCheckMessage", new Dictionary<string, object>
+                {
+                    { "downloadClientNames", string.Join(", ", backOffProviders.Select(v => v.Provider.Definition.Name)) }
+                }),
+                "#download-clients-are-unavailable-due-to-failures");
         }
     }
 }

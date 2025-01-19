@@ -1,6 +1,5 @@
 export const AUTO_COMPLETE = 'autoComplete';
 export const APP_PROFILE_SELECT = 'appProfileSelect';
-export const AVAILABILITY_SELECT = 'availabilitySelect';
 export const CAPTCHA = 'captcha';
 export const CARDIGANNCAPTCHA = 'cardigannCaptcha';
 export const CHECK = 'check';
@@ -8,6 +7,9 @@ export const DEVICE = 'device';
 export const KEY_VALUE_LIST = 'keyValueList';
 export const INFO = 'info';
 export const MOVIE_MONITORED_SELECT = 'movieMonitoredSelect';
+export const CATEGORY_SELECT = 'newznabCategorySelect';
+export const DOWNLOAD_CLIENT_SELECT = 'downloadClientSelect';
+export const FLOAT = 'float';
 export const NUMBER = 'number';
 export const OAUTH = 'oauth';
 export const PASSWORD = 'password';
@@ -24,7 +26,6 @@ export const TAG_SELECT = 'tagSelect';
 export const all = [
   AUTO_COMPLETE,
   APP_PROFILE_SELECT,
-  AVAILABILITY_SELECT,
   CAPTCHA,
   CARDIGANNCAPTCHA,
   CHECK,
@@ -32,6 +33,8 @@ export const all = [
   KEY_VALUE_LIST,
   INFO,
   MOVIE_MONITORED_SELECT,
+  CATEGORY_SELECT,
+  FLOAT,
   NUMBER,
   OAUTH,
   PASSWORD,

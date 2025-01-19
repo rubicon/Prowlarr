@@ -1,48 +1,85 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
+using System.Web;
 using NLog;
+using NzbDrone.Common;
+using NzbDrone.Common.Cache;
 using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
+using NzbDrone.Common.Serializer;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Exceptions;
-using NzbDrone.Core.Http.CloudFlare;
+using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Messaging.Events;
+using NzbDrone.Core.Parser;
+using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Validation;
 
-namespace NzbDrone.Core.Indexers.Rarbg
+namespace NzbDrone.Core.Indexers.Definitions.Rarbg
 {
+    [Obsolete("Rarbg has shutdown 2023-05-31")]
     public class Rarbg : TorrentIndexerBase<RarbgSettings>
     {
-        private readonly IRarbgTokenProvider _tokenProvider;
-
         public override string Name => "Rarbg";
-        public override string[] IndexerUrls => new string[] { "https://torrentapi.org" };
+        public override string[] IndexerUrls => new[] { "https://torrentapi.org/" };
+        public override string[] LegacyUrls => new[] { "https://torrentapi.org" };
         public override string Description => "RARBG is a Public torrent site for MOVIES / TV / GENERAL";
-
-        public override DownloadProtocol Protocol => DownloadProtocol.Torrent;
-
         public override IndexerPrivacy Privacy => IndexerPrivacy.Public;
-
         public override IndexerCapabilities Capabilities => SetCapabilities();
+        public override TimeSpan RateLimit => TimeSpan.FromSeconds(7);
+        private readonly IRarbgTokenProvider _tokenProvider;
+        private readonly ICached<IndexerQueryResult> _queryResultCache;
 
-        public override TimeSpan RateLimit => TimeSpan.FromSeconds(2);
-
-        public Rarbg(IRarbgTokenProvider tokenProvider, IIndexerHttpClient httpClient, IEventAggregator eventAggregator, IIndexerStatusService indexerStatusService, IConfigService configService, Logger logger)
+        public Rarbg(IRarbgTokenProvider tokenProvider, IIndexerHttpClient httpClient, IEventAggregator eventAggregator, IIndexerStatusService indexerStatusService, IConfigService configService, Logger logger, ICacheManager cacheManager)
             : base(httpClient, eventAggregator, indexerStatusService, configService, logger)
         {
             _tokenProvider = tokenProvider;
+            _queryResultCache = cacheManager.GetCache<IndexerQueryResult>(GetType(), "QueryResults");
         }
 
         public override IIndexerRequestGenerator GetRequestGenerator()
         {
-            return new RarbgRequestGenerator(_tokenProvider) { Settings = Settings, Categories = Capabilities.Categories };
+            return new RarbgRequestGenerator(_tokenProvider, RateLimit) { Settings = Settings, Categories = Capabilities.Categories };
         }
 
         public override IParseIndexerResponse GetParser()
         {
-            return new RarbgParser(Capabilities);
+            return new RarbgParser(Capabilities, _logger);
+        }
+
+        protected string BuildQueryResultCacheKey(IndexerRequest request)
+        {
+            return $"{request.HttpRequest.Url.FullUri}.{HashUtil.ComputeSha256Hash(Settings.ToJson())}";
+        }
+
+        protected override async Task<IndexerQueryResult> FetchPage(IndexerRequest request, IParseIndexerResponse parser)
+        {
+            var cacheKey = BuildQueryResultCacheKey(request);
+            var queryResult = _queryResultCache.Find(cacheKey);
+
+            if (queryResult != null)
+            {
+                queryResult.Cached = true;
+
+                return queryResult;
+            }
+
+            _queryResultCache.ClearExpired();
+
+            queryResult = await base.FetchPage(request, parser);
+            _queryResultCache.Set(cacheKey, queryResult, TimeSpan.FromMinutes(10));
+
+            return queryResult;
+        }
+
+        protected override IList<ReleaseInfo> CleanupReleases(IEnumerable<ReleaseInfo> releases, SearchCriteriaBase searchCriteria)
+        {
+            var cleanReleases = base.CleanupReleases(releases, searchCriteria);
+
+            return cleanReleases.Select(r => (ReleaseInfo)r.Clone()).ToList();
         }
 
         private IndexerCapabilities SetCapabilities()
@@ -50,20 +87,20 @@ namespace NzbDrone.Core.Indexers.Rarbg
             var caps = new IndexerCapabilities
             {
                 TvSearchParams = new List<TvSearchParam>
-                       {
-                           TvSearchParam.Q, TvSearchParam.Season, TvSearchParam.Ep, TvSearchParam.ImdbId, TvSearchParam.TvdbId
-                       },
+                {
+                    TvSearchParam.Q, TvSearchParam.Season, TvSearchParam.Ep, TvSearchParam.ImdbId, TvSearchParam.TvdbId
+                },
                 MovieSearchParams = new List<MovieSearchParam>
-                       {
-                           MovieSearchParam.Q, MovieSearchParam.ImdbId, MovieSearchParam.TmdbId
-                       },
+                {
+                    MovieSearchParam.Q, MovieSearchParam.ImdbId, MovieSearchParam.TmdbId
+                },
                 MusicSearchParams = new List<MusicSearchParam>
-                       {
-                           MusicSearchParam.Q
-                       }
+                {
+                    MusicSearchParam.Q
+                }
             };
 
-            caps.Categories.AddCategoryMapping(4, NewznabStandardCategory.XXX, "XXX (18+)");
+            // caps.Categories.AddCategoryMapping(4, NewznabStandardCategory.XXX, "XXX (18+)"); // 3x is not supported by API #11848
             caps.Categories.AddCategoryMapping(14, NewznabStandardCategory.MoviesSD, "Movies/XVID");
             caps.Categories.AddCategoryMapping(17, NewznabStandardCategory.MoviesSD, "Movies/x264");
             caps.Categories.AddCategoryMapping(18, NewznabStandardCategory.TVSD, "TV Episodes");
@@ -95,42 +132,62 @@ namespace NzbDrone.Core.Indexers.Rarbg
             return caps;
         }
 
+        protected override async Task<IndexerResponse> FetchIndexerResponse(IndexerRequest request)
+        {
+            var response = await base.FetchIndexerResponse(request);
+
+            ((RarbgParser)GetParser()).CheckResponseByStatusCode(response);
+
+            // try and recover from token errors
+            var jsonResponse = new HttpResponse<RarbgResponse>(response.HttpResponse);
+
+            if (jsonResponse.Resource.error_code.HasValue)
+            {
+                if (jsonResponse.Resource.error_code is 4 or 2)
+                {
+                    _logger.Debug("Invalid or expired token, refreshing token from Rarbg");
+                    _tokenProvider.ExpireToken(Settings);
+                    var newToken = _tokenProvider.GetToken(Settings, RateLimit);
+
+                    var qs = HttpUtility.ParseQueryString(request.HttpRequest.Url.Query);
+                    qs.Set("token", newToken);
+
+                    request.HttpRequest.Url = request.Url.SetQuery(qs.GetQueryString());
+
+                    return await FetchIndexerResponse(request);
+                }
+
+                if (jsonResponse.Resource.error_code is 5)
+                {
+                    _logger.Debug("Rarbg temp rate limit hit, retrying request");
+
+                    return await FetchIndexerResponse(request);
+                }
+            }
+
+            return response;
+        }
+
         public override object RequestAction(string action, IDictionary<string, string> query)
         {
             if (action == "checkCaptcha")
             {
                 Settings.Validate().Filter("BaseUrl").ThrowOnError();
 
-                try
-                {
-                    var request = new HttpRequestBuilder(Settings.BaseUrl.Trim('/'))
-                           .Resource($"/pubapi_v2.php?get_token=get_token&app_id={BuildInfo.AppName}")
-                           .Accept(HttpAccept.Json)
-                           .Build();
+                var request = new HttpRequestBuilder(Settings.BaseUrl.Trim('/'))
+                    .Resource($"/pubapi_v2.php?get_token=get_token&app_id=rralworP_{BuildInfo.Version}")
+                    .Accept(HttpAccept.Json)
+                    .Build();
 
-                    _httpClient.Get(request);
-                }
-                catch (CloudFlareCaptchaException ex)
-                {
-                    return new
-                    {
-                        captchaRequest = new
-                        {
-                            host = ex.CaptchaRequest.Host,
-                            ray = ex.CaptchaRequest.Ray,
-                            siteKey = ex.CaptchaRequest.SiteKey,
-                            secretToken = ex.CaptchaRequest.SecretToken,
-                            responseUrl = ex.CaptchaRequest.ResponseUrl.FullUri,
-                        }
-                    };
-                }
+                _httpClient.Get(request);
 
                 return new
                 {
                     captchaToken = ""
                 };
             }
-            else if (action == "getCaptchaCookie")
+
+            if (action == "getCaptchaCookie")
             {
                 if (query["responseUrl"].IsNullOrWhiteSpace())
                 {
@@ -164,7 +221,8 @@ namespace NzbDrone.Core.Indexers.Rarbg
                     captchaToken = cfClearanceCookie
                 };
             }
-            else if (action == "getUrls")
+
+            if (action == "getUrls")
             {
                 var links = IndexerUrls;
 

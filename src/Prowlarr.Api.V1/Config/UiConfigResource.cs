@@ -16,13 +16,13 @@ namespace Prowlarr.Api.V1.Config
         public bool ShowRelativeDates { get; set; }
 
         public bool EnableColorImpairedMode { get; set; }
-        public int MovieInfoLanguage { get; set; }
-        public int UILanguage { get; set; }
+        public string UILanguage { get; set; }
+        public string Theme { get; set; }
     }
 
     public static class UiConfigResourceMapper
     {
-        public static UiConfigResource ToResource(IConfigService model)
+        public static UiConfigResource ToResource(IConfigFileProvider config, IConfigService model)
         {
             return new UiConfigResource
             {
@@ -35,8 +35,8 @@ namespace Prowlarr.Api.V1.Config
                 ShowRelativeDates = model.ShowRelativeDates,
 
                 EnableColorImpairedMode = model.EnableColorImpairedMode,
-                MovieInfoLanguage = model.MovieInfoLanguage,
-                UILanguage = model.UILanguage
+                UILanguage = model.UILanguage,
+                Theme = config.Theme
             };
         }
     }

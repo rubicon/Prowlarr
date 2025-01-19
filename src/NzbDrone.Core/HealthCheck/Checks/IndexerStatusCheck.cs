@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Indexers;
@@ -9,6 +10,8 @@ namespace NzbDrone.Core.HealthCheck.Checks
 {
     [CheckOn(typeof(ProviderUpdatedEvent<IIndexer>))]
     [CheckOn(typeof(ProviderDeletedEvent<IIndexer>))]
+    [CheckOn(typeof(ProviderBulkUpdatedEvent<IIndexer>))]
+    [CheckOn(typeof(ProviderBulkDeletedEvent<IIndexer>))]
     [CheckOn(typeof(ProviderStatusChangedEvent<IIndexer>))]
     public class IndexerStatusCheck : HealthCheckBase
     {
@@ -26,13 +29,12 @@ namespace NzbDrone.Core.HealthCheck.Checks
         {
             var enabledProviders = _providerFactory.GetAvailableProviders();
             var backOffProviders = enabledProviders.Join(_providerStatusService.GetBlockedProviders(),
-                                                       i => i.Definition.Id,
-                                                       s => s.ProviderId,
-                                                       (i, s) => new { Provider = i, Status = s })
-                                                   .Where(p => p.Status.InitialFailure.HasValue &&
-                                                               p.Status.InitialFailure.Value.After(
-                                                                   DateTime.UtcNow.AddHours(-6)))
-                                                   .ToList();
+                    i => i.Definition.Id,
+                    s => s.ProviderId,
+                    (i, s) => new { Provider = i, Status = s })
+                .Where(p => p.Status.InitialFailure.HasValue &&
+                            p.Status.InitialFailure.Value.After(DateTime.UtcNow.AddHours(-6)))
+                .ToList();
 
             if (backOffProviders.Empty())
             {
@@ -43,14 +45,16 @@ namespace NzbDrone.Core.HealthCheck.Checks
             {
                 return new HealthCheck(GetType(),
                     HealthCheckResult.Error,
-                    _localizationService.GetLocalizedString("IndexerStatusCheckAllClientMessage"),
+                    _localizationService.GetLocalizedString("IndexerStatusAllUnavailableHealthCheckMessage"),
                     "#indexers-are-unavailable-due-to-failures");
             }
 
             return new HealthCheck(GetType(),
                 HealthCheckResult.Warning,
-                string.Format(_localizationService.GetLocalizedString("IndexerStatusCheckSingleClientMessage"),
-                    string.Join(", ", backOffProviders.Select(v => v.Provider.Definition.Name))),
+                _localizationService.GetLocalizedString("IndexerStatusUnavailableHealthCheckMessage", new Dictionary<string, object>
+                {
+                    { "indexerNames", string.Join(", ", backOffProviders.Select(v => v.Provider.Definition.Name)) }
+                }),
                 "#indexers-are-unavailable-due-to-failures");
         }
     }

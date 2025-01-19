@@ -1,15 +1,93 @@
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
+import Label from 'Components/Label';
 import IconButton from 'Components/Link/IconButton';
-import RelativeDateCellConnector from 'Components/Table/Cells/RelativeDateCellConnector';
+import RelativeDateCell from 'Components/Table/Cells/RelativeDateCell';
 import TableRowCell from 'Components/Table/Cells/TableRowCell';
 import TableRow from 'Components/Table/TableRow';
-import { icons } from 'Helpers/Props';
+import { icons, kinds } from 'Helpers/Props';
 import CapabilitiesLabel from 'Indexer/Index/Table/CapabilitiesLabel';
+import translate from 'Utilities/String/translate';
 import HistoryDetailsModal from './Details/HistoryDetailsModal';
+import * as historyDataTypes from './historyDataTypes';
 import HistoryEventTypeCell from './HistoryEventTypeCell';
 import HistoryRowParameter from './HistoryRowParameter';
 import styles from './HistoryRow.css';
+
+export const historyParameters = [
+  { key: historyDataTypes.IMDB_ID, title: 'IMDb' },
+  { key: historyDataTypes.TMDB_ID, title: 'TMDb' },
+  { key: historyDataTypes.TVDB_ID, title: 'TVDb' },
+  { key: historyDataTypes.TRAKT_ID, title: 'Trakt' },
+  { key: historyDataTypes.R_ID, title: 'TvRage' },
+  { key: historyDataTypes.TVMAZE_ID, title: 'TvMaze' },
+  {
+    key: historyDataTypes.SEASON,
+    get title() {
+      return translate('Season');
+    }
+  },
+  {
+    key: historyDataTypes.EPISODE,
+    get title() {
+      return translate('Episode');
+    }
+  },
+  {
+    key: historyDataTypes.ARTIST,
+    get title() {
+      return translate('Artist');
+    }
+  },
+  {
+    key: historyDataTypes.ALBUM,
+    get title() {
+      return translate('Album');
+    }
+  },
+  {
+    key: historyDataTypes.LABEL,
+    get title() {
+      return translate('Label');
+    }
+  },
+  {
+    key: historyDataTypes.TRACK,
+    get title() {
+      return translate('Track');
+    }
+  },
+  {
+    key: historyDataTypes.YEAR,
+    get title() {
+      return translate('Year');
+    }
+  },
+  {
+    key: historyDataTypes.GENRE,
+    get title() {
+      return translate('Genre');
+    }
+  },
+  {
+    key: historyDataTypes.AUTHOR,
+    get title() {
+      return translate('Author');
+    }
+  },
+  {
+    key: historyDataTypes.TITLE,
+    get title() {
+      return translate('Title');
+    }
+  },
+  {
+    key: historyDataTypes.PUBLISHER,
+    get title() {
+      return translate('Publisher');
+    }
+  }
+];
 
 class HistoryRow extends Component {
 
@@ -43,15 +121,52 @@ class HistoryRow extends Component {
       data
     } = this.props;
 
+    const { query, queryType, limit, offset } = data;
+
+    let searchQuery = query;
     let categories = [];
 
     if (data.categories) {
-      categories = data.categories.split(',').map((item) => {
-        return parseInt(item);
-      });
+      categories = data.categories.split(',').map((item) => parseInt(item));
     }
 
-    this.props.onSearchPress(data.query, indexer.id, categories);
+    const searchParams = [
+      historyDataTypes.IMDB_ID,
+      historyDataTypes.TMDB_ID,
+      historyDataTypes.TVDB_ID,
+      historyDataTypes.TRAKT_ID,
+      historyDataTypes.R_ID,
+      historyDataTypes.TVMAZE_ID,
+      historyDataTypes.SEASON,
+      historyDataTypes.EPISODE,
+      historyDataTypes.ARTIST,
+      historyDataTypes.ALBUM,
+      historyDataTypes.LABEL,
+      historyDataTypes.TRACK,
+      historyDataTypes.YEAR,
+      historyDataTypes.GENRE,
+      historyDataTypes.AUTHOR,
+      historyDataTypes.TITLE,
+      historyDataTypes.PUBLISHER
+    ]
+      .reduce((acc, key) => {
+        if (key in data && data[key].length > 0) {
+          const value = data[key];
+
+          acc.push({ key, value });
+        }
+
+        return acc;
+      }, [])
+      .map((item) => `{${item.key}:${item.value}}`)
+      .join('')
+    ;
+
+    if (searchParams.length > 0) {
+      searchQuery += `${searchParams}`;
+    }
+
+    this.props.onSearchPress(searchQuery, indexer.id, categories, queryType, parseInt(limit), parseInt(offset));
   };
 
   onDetailsPress = () => {
@@ -82,6 +197,8 @@ class HistoryRow extends Component {
     if (!indexer) {
       return null;
     }
+
+    const parameters = historyParameters.filter((parameter) => parameter.key in data && data[parameter.key]);
 
     return (
       <TableRow>
@@ -132,117 +249,20 @@ class HistoryRow extends Component {
 
             if (name === 'parameters') {
               return (
-                <TableRowCell
-                  key={name}
-                  className={styles.parameters}
-                >
-                  {
-                    data.imdbId ?
-                      <HistoryRowParameter
-                        title='IMDb'
-                        value={data.imdbId}
-                      /> :
-                      null
-                  }
-
-                  {
-                    data.tmdbId ?
-                      <HistoryRowParameter
-                        title='TMDb'
-                        value={data.tmdbId}
-                      /> :
-                      null
-                  }
-
-                  {
-                    data.tvdbId ?
-                      <HistoryRowParameter
-                        title='TVDb'
-                        value={data.tvdbId}
-                      /> :
-                      null
-                  }
-
-                  {
-                    data.traktId ?
-                      <HistoryRowParameter
-                        title='Trakt'
-                        value={data.traktId}
-                      /> :
-                      null
-                  }
-
-                  {
-                    data.rId ?
-                      <HistoryRowParameter
-                        title='TvRage'
-                        value={data.rId}
-                      /> :
-                      null
-                  }
-
-                  {
-                    data.tvMazeId ?
-                      <HistoryRowParameter
-                        title='TvMaze'
-                        value={data.tvMazeId}
-                      /> :
-                      null
-                  }
-
-                  {
-                    data.season ?
-                      <HistoryRowParameter
-                        title='Season'
-                        value={data.season}
-                      /> :
-                      null
-                  }
-
-                  {
-                    data.episode ?
-                      <HistoryRowParameter
-                        title='Episode'
-                        value={data.episode}
-                      /> :
-                      null
-                  }
-
-                  {
-                    data.artist ?
-                      <HistoryRowParameter
-                        title='Artist'
-                        value={data.artist}
-                      /> :
-                      null
-                  }
-
-                  {
-                    data.album ?
-                      <HistoryRowParameter
-                        title='Album'
-                        value={data.album}
-                      /> :
-                      null
-                  }
-
-                  {
-                    data.author ?
-                      <HistoryRowParameter
-                        title='Author'
-                        value={data.author}
-                      /> :
-                      null
-                  }
-
-                  {
-                    data.bookTitle ?
-                      <HistoryRowParameter
-                        title='Book'
-                        value={data.bookTitle}
-                      /> :
-                      null
-                  }
+                <TableRowCell key={name}>
+                  <div className={styles.parametersContent}>
+                    {parameters.map((parameter) => {
+                      return (
+                        <HistoryRowParameter
+                          key={parameter.key}
+                          title={parameter.title}
+                          value={data[parameter.key]}
+                          queryType={data.queryType}
+                        />
+                      );
+                    }
+                    )}
+                  </div>
                 </TableRowCell>
               );
             }
@@ -254,8 +274,25 @@ class HistoryRow extends Component {
                   className={styles.indexer}
                 >
                   {
-                    data.title ?
-                      data.title :
+                    data.grabTitle ?
+                      data.grabTitle :
+                      null
+                  }
+                </TableRowCell>
+              );
+            }
+
+            if (name === 'queryType') {
+              return (
+                <TableRowCell
+                  key={name}
+                  className={styles.query}
+                >
+                  {
+                    data.queryType ?
+                      <Label kind={kinds.INFO}>
+                        {data.queryType}
+                      </Label> :
                       null
                   }
                 </TableRowCell>
@@ -295,6 +332,21 @@ class HistoryRow extends Component {
               );
             }
 
+            if (name === 'host') {
+              return (
+                <TableRowCell
+                  key={name}
+                  className={styles.indexer}
+                >
+                  {
+                    data.host ?
+                      data.host :
+                      null
+                  }
+                </TableRowCell>
+              );
+            }
+
             if (name === 'elapsedTime') {
               return (
                 <TableRowCell
@@ -306,16 +358,22 @@ class HistoryRow extends Component {
                       `${data.elapsedTime}ms` :
                       null
                   }
+                  {
+                    data.cached === '1' ?
+                      ' (cached)' :
+                      null
+                  }
                 </TableRowCell>
               );
             }
 
             if (name === 'date') {
               return (
-                <RelativeDateCellConnector
+                <RelativeDateCell
                   key={name}
-                  date={date}
                   className={styles.date}
+                  date={date}
+                  includeSeconds={true}
                 />
               );
             }
@@ -326,20 +384,21 @@ class HistoryRow extends Component {
                   key={name}
                   className={styles.details}
                 >
+                  <IconButton
+                    name={icons.INFO}
+                    onPress={this.onDetailsPress}
+                    title={translate('HistoryDetails')}
+                  />
+
                   {
                     eventType === 'indexerQuery' ?
                       <IconButton
                         name={icons.SEARCH}
                         onPress={this.onSearchPress}
-                        title='Repeat Search'
+                        title={translate('RepeatSearch')}
                       /> :
                       null
                   }
-                  <IconButton
-                    name={icons.INFO}
-                    onPress={this.onDetailsPress}
-                    title='History Details'
-                  />
                 </TableRowCell>
               );
             }
@@ -351,6 +410,7 @@ class HistoryRow extends Component {
         <HistoryDetailsModal
           isOpen={this.state.isDetailsModalOpen}
           eventType={eventType}
+          date={date}
           data={data}
           indexer={indexer}
           isMarkingAsFailed={isMarkingAsFailed}

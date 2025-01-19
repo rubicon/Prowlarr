@@ -1,11 +1,9 @@
-import _ from 'lodash';
-
 export default function getIndexOfFirstCharacter(items, character) {
-  return _.findIndex(items, (item) => {
-    const firstCharacter = item.sortTitle.charAt(0);
+  return items.findIndex((item) => {
+    const firstCharacter = 'sortName' in item ? item.sortName.charAt(0) : item.sortTitle.charAt(0);
 
     if (character === '#') {
-      return !isNaN(firstCharacter);
+      return !isNaN(Number(firstCharacter));
     }
 
     return firstCharacter === character;

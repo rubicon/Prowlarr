@@ -1,11 +1,14 @@
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import Alert from 'Components/Alert';
+import Card from 'Components/Card';
+import FieldSet from 'Components/FieldSet';
 import Form from 'Components/Form/Form';
 import FormGroup from 'Components/Form/FormGroup';
 import FormInputGroup from 'Components/Form/FormInputGroup';
 import FormLabel from 'Components/Form/FormLabel';
 import ProviderFieldFormGroup from 'Components/Form/ProviderFieldFormGroup';
+import Icon from 'Components/Icon';
 import Button from 'Components/Link/Button';
 import SpinnerErrorButton from 'Components/Link/SpinnerErrorButton';
 import LoadingIndicator from 'Components/Loading/LoadingIndicator';
@@ -13,11 +16,33 @@ import ModalBody from 'Components/Modal/ModalBody';
 import ModalContent from 'Components/Modal/ModalContent';
 import ModalFooter from 'Components/Modal/ModalFooter';
 import ModalHeader from 'Components/Modal/ModalHeader';
-import { inputTypes, kinds } from 'Helpers/Props';
+import { icons, inputTypes, kinds } from 'Helpers/Props';
+import AdvancedSettingsButton from 'Settings/AdvancedSettingsButton';
 import translate from 'Utilities/String/translate';
+import AddCategoryModalConnector from './Categories/AddCategoryModalConnector';
+import Category from './Categories/Category';
 import styles from './EditDownloadClientModalContent.css';
 
 class EditDownloadClientModalContent extends Component {
+
+  //
+  // Lifecycle
+
+  constructor(props, context) {
+    super(props, context);
+
+    this.state = {
+      isAddCategoryModalOpen: false
+    };
+  }
+
+  onAddCategoryPress = () => {
+    this.setState({ isAddCategoryModalOpen: true });
+  };
+
+  onAddCategoryModalClose = () => {
+    this.setState({ isAddCategoryModalOpen: false });
+  };
 
   //
   // Render
@@ -27,6 +52,7 @@ class EditDownloadClientModalContent extends Component {
       advancedSettings,
       isFetching,
       error,
+      categories,
       isSaving,
       isTesting,
       saveError,
@@ -36,9 +62,15 @@ class EditDownloadClientModalContent extends Component {
       onModalClose,
       onSavePress,
       onTestPress,
+      onAdvancedSettingsPress,
       onDeleteDownloadClientPress,
+      onConfirmDeleteCategory,
       ...otherProps
     } = this.props;
+
+    const {
+      isAddCategoryModalOpen
+    } = this.state;
 
     const {
       id,
@@ -46,6 +78,7 @@ class EditDownloadClientModalContent extends Component {
       name,
       enable,
       priority,
+      supportsCategories,
       fields,
       message
     } = item;
@@ -53,7 +86,7 @@ class EditDownloadClientModalContent extends Component {
     return (
       <ModalContent onModalClose={onModalClose}>
         <ModalHeader>
-          {`${id ? translate('Edit') : translate('Add')} ${translate('DownloadClient')} - ${implementationName}`}
+          {id ? translate('EditDownloadClientImplementation', { implementationName }) : translate('AddDownloadClientImplementation', { implementationName })}
         </ModalHeader>
 
         <ModalBody>
@@ -128,13 +161,50 @@ class EditDownloadClientModalContent extends Component {
                   <FormInputGroup
                     type={inputTypes.NUMBER}
                     name="priority"
-                    helpText={translate('PriorityHelpText')}
+                    helpText={translate('DownloadClientPriorityHelpText')}
                     min={1}
                     max={50}
                     {...priority}
                     onChange={onInputChange}
                   />
                 </FormGroup>
+
+                {
+                  supportsCategories.value ?
+                    <FieldSet legend={translate('MappedCategories')}>
+                      <div className={styles.customFormats}>
+                        {
+                          categories.map((tag) => {
+                            return (
+                              <Category
+                                key={tag.id}
+                                {...tag}
+                                onConfirmDeleteSpecification={onConfirmDeleteCategory}
+                              />
+                            );
+                          })
+                        }
+
+                        <Card
+                          className={styles.addCategory}
+                          onPress={this.onAddCategoryPress}
+                        >
+                          <div className={styles.center}>
+                            <Icon
+                              name={icons.ADD}
+                              size={25}
+                            />
+                          </div>
+                        </Card>
+                      </div>
+                    </FieldSet> :
+                    null
+                }
+
+                <AddCategoryModalConnector
+                  isOpen={isAddCategoryModalOpen}
+                  onModalClose={this.onAddCategoryModalClose}
+                />
 
               </Form>
           }
@@ -150,6 +220,12 @@ class EditDownloadClientModalContent extends Component {
                 {translate('Delete')}
               </Button>
           }
+
+          <AdvancedSettingsButton
+            advancedSettings={advancedSettings}
+            onAdvancedSettingsPress={onAdvancedSettingsPress}
+            showLabel={false}
+          />
 
           <SpinnerErrorButton
             isSpinning={isTesting}
@@ -185,13 +261,16 @@ EditDownloadClientModalContent.propTypes = {
   isSaving: PropTypes.bool.isRequired,
   saveError: PropTypes.object,
   isTesting: PropTypes.bool.isRequired,
+  categories: PropTypes.arrayOf(PropTypes.object),
   item: PropTypes.object.isRequired,
   onInputChange: PropTypes.func.isRequired,
   onFieldChange: PropTypes.func.isRequired,
   onModalClose: PropTypes.func.isRequired,
   onSavePress: PropTypes.func.isRequired,
   onTestPress: PropTypes.func.isRequired,
-  onDeleteDownloadClientPress: PropTypes.func
+  onAdvancedSettingsPress: PropTypes.func.isRequired,
+  onDeleteDownloadClientPress: PropTypes.func,
+  onConfirmDeleteCategory: PropTypes.func.isRequired
 };
 
 export default EditDownloadClientModalContent;

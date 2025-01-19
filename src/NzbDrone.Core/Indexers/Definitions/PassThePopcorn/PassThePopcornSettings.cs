@@ -1,10 +1,11 @@
 using FluentValidation;
 using NzbDrone.Core.Annotations;
+using NzbDrone.Core.Indexers.Settings;
 using NzbDrone.Core.Validation;
 
-namespace NzbDrone.Core.Indexers.PassThePopcorn
+namespace NzbDrone.Core.Indexers.Definitions.PassThePopcorn
 {
-    public class PassThePopcornSettingsValidator : AbstractValidator<PassThePopcornSettings>
+    public class PassThePopcornSettingsValidator : NoAuthSettingsValidator<PassThePopcornSettings>
     {
         public PassThePopcornSettingsValidator()
         {
@@ -13,27 +14,23 @@ namespace NzbDrone.Core.Indexers.PassThePopcorn
         }
     }
 
-    public class PassThePopcornSettings : IIndexerSettings
+    public class PassThePopcornSettings : NoAuthTorrentBaseSettings
     {
-        private static readonly PassThePopcornSettingsValidator Validator = new PassThePopcornSettingsValidator();
+        private static readonly PassThePopcornSettingsValidator Validator = new ();
 
-        public PassThePopcornSettings()
-        {
-        }
-
-        [FieldDefinition(1, Label = "Base Url", Type = FieldType.Select, SelectOptionsProviderAction = "getUrls", HelpText = "Select which baseurl Prowlarr will use for requests to the site")]
-        public string BaseUrl { get; set; }
-
-        [FieldDefinition(2, Label = "APIUser", HelpText = "These settings are found in your PassThePopcorn security settings (Edit Profile > Security).", Privacy = PrivacyLevel.UserName)]
+        [FieldDefinition(2, Label = "IndexerSettingsApiUser", HelpText = "IndexerPassThePopcornSettingsApiUserHelpText", Privacy = PrivacyLevel.UserName)]
         public string APIUser { get; set; }
 
-        [FieldDefinition(3, Label = "API Key", HelpText = "Site API Key", Privacy = PrivacyLevel.ApiKey)]
+        [FieldDefinition(3, Label = "ApiKey", HelpText = "IndexerPassThePopcornSettingsApiKeyHelpText", Privacy = PrivacyLevel.ApiKey)]
         public string APIKey { get; set; }
 
-        [FieldDefinition(4)]
-        public IndexerBaseSettings BaseSettings { get; set; } = new IndexerBaseSettings();
+        [FieldDefinition(4, Label = "IndexerSettingsFreeleechOnly", HelpText = "IndexerPassThePopcornSettingsFreeleechOnlyHelpText", Type = FieldType.Checkbox)]
+        public bool FreeleechOnly { get; set; }
 
-        public NzbDroneValidationResult Validate()
+        [FieldDefinition(5, Label = "IndexerPassThePopcornSettingsGoldenPopcornOnly", HelpText = "IndexerPassThePopcornSettingsGoldenPopcornOnlyHelpText", Type = FieldType.Checkbox, Advanced = true)]
+        public bool GoldenPopcornOnly { get; set; }
+
+        public override NzbDroneValidationResult Validate()
         {
             return new NzbDroneValidationResult(Validator.Validate(this));
         }

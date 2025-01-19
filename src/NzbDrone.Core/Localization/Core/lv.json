@@ -1,0 +1,20 @@
+{
+    "About": "Par",
+    "AcceptConfirmationModal": "Apstiprināt Apstiprināšanas Modālu",
+    "Actions": "Darbības",
+    "Add": "Pievienot",
+    "AddDownloadClient": "Pievienot Lejupielādes Klientu",
+    "AddConnection": "Pievienot Savienojumu",
+    "AddConnectionImplementation": "Pievienot Savienojumu - {implementationName}",
+    "New": "Jauns",
+    "Connect": "Paziņojumi",
+    "Notification": "Paziņojumi",
+    "Notifications": "Paziņojumi",
+    "EditConnectionImplementation": "Pievienot Savienojumu - {implementationName}",
+    "EditIndexerImplementation": "Pievienot Nosacījumu - {implementationName}",
+    "EditApplicationImplementation": "Pievienot Savienojumu - {implementationName}",
+    "AddIndexerImplementation": "Pievienot Nosacījumu - {implementationName}",
+    "AddIndexerProxyImplementation": "Pievienot Nosacījumu - {implementationName}",
+    "AddApplicationImplementation": "Pievienot Savienojumu - {implementationName}",
+    "EditIndexerProxyImplementation": "Pievienot Nosacījumu - {implementationName}"
+}

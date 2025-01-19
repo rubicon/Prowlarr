@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.EnvironmentInfo;
@@ -39,7 +40,7 @@ namespace NzbDrone.Core.HealthCheck.Checks
             var startupFolder = _appFolderInfo.StartUpFolder;
             var uiFolder = Path.Combine(startupFolder, "UI");
 
-            if ((OsInfo.IsWindows || _configFileProvider.UpdateAutomatically) &&
+            if (_configFileProvider.UpdateAutomatically &&
                 _configFileProvider.UpdateMechanism == UpdateMechanism.BuiltIn &&
                 !_osInfo.IsDocker)
             {
@@ -47,7 +48,12 @@ namespace NzbDrone.Core.HealthCheck.Checks
                 {
                     return new HealthCheck(GetType(),
                         HealthCheckResult.Error,
-                        string.Format(_localizationService.GetLocalizedString("UpdateCheckStartupTranslocationMessage"), startupFolder),
+                        _localizationService.GetLocalizedString(
+                            "UpdateStartupTranslocationHealthCheckMessage",
+                            new Dictionary<string, object>
+                            {
+                                { "startupFolder", startupFolder }
+                            }),
                         "#cannot-install-update-because-startup-folder-is-in-an-app-translocation-folder.");
                 }
 
@@ -55,7 +61,13 @@ namespace NzbDrone.Core.HealthCheck.Checks
                 {
                     return new HealthCheck(GetType(),
                         HealthCheckResult.Error,
-                        string.Format(_localizationService.GetLocalizedString("UpdateCheckStartupNotWritableMessage"), startupFolder, Environment.UserName),
+                        _localizationService.GetLocalizedString(
+                            "UpdateStartupNotWritableHealthCheckMessage",
+                            new Dictionary<string, object>
+                            {
+                                { "startupFolder", startupFolder },
+                                { "userName", Environment.UserName }
+                            }),
                         "#cannot-install-update-because-startup-folder-is-not-writable-by-the-user");
                 }
 
@@ -63,16 +75,30 @@ namespace NzbDrone.Core.HealthCheck.Checks
                 {
                     return new HealthCheck(GetType(),
                         HealthCheckResult.Error,
-                        string.Format(_localizationService.GetLocalizedString("UpdateCheckUINotWritableMessage"), uiFolder, Environment.UserName),
+                        _localizationService.GetLocalizedString(
+                            "UpdateUiNotWritableHealthCheckMessage",
+                            new Dictionary<string, object>
+                            {
+                                { "uiFolder", uiFolder },
+                                { "userName", Environment.UserName }
+                            }),
                         "#cannot-install-update-because-ui-folder-is-not-writable-by-the-user");
                 }
             }
 
             if (BuildInfo.BuildDateTime < DateTime.UtcNow.AddDays(-14))
             {
-                if (_checkUpdateService.AvailableUpdate() != null)
+                var latestAvailable = _checkUpdateService.AvailableUpdate();
+
+                if (latestAvailable != null)
                 {
-                    return new HealthCheck(GetType(), HealthCheckResult.Warning, "New update is available");
+                    return new HealthCheck(GetType(),
+                        BuildInfo.BuildDateTime.Before(DateTime.UtcNow.AddDays(-180)) ? HealthCheckResult.Error : HealthCheckResult.Warning,
+                        _localizationService.GetLocalizedString("UpdateAvailableHealthCheckMessage", new Dictionary<string, object>
+                        {
+                            { "version", $"v{latestAvailable.Version}" }
+                        }),
+                        "#new-update-is-available");
                 }
             }
 

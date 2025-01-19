@@ -10,9 +10,9 @@ namespace NzbDrone.Core.Applications
         void DeleteAllForApp(int appId);
     }
 
-    public class TagRepository : BasicRepository<AppIndexerMap>, IAppIndexerMapRepository
+    public class AppIndexerMapRepository : BasicRepository<AppIndexerMap>, IAppIndexerMapRepository
     {
-        public TagRepository(IMainDatabase database, IEventAggregator eventAggregator)
+        public AppIndexerMapRepository(IMainDatabase database, IEventAggregator eventAggregator)
             : base(database, eventAggregator)
         {
         }

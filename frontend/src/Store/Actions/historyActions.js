@@ -1,5 +1,5 @@
 import { createAction } from 'redux-actions';
-import { filterTypes, sortDirections } from 'Helpers/Props';
+import { filterBuilderTypes, filterBuilderValueTypes, filterTypes, sortDirections } from 'Helpers/Props';
 import { createThunk, handleThunks } from 'Store/thunks';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
 import serverSideCollectionHandlers from 'Utilities/serverSideCollectionHandlers';
@@ -30,61 +30,73 @@ export const defaultState = {
   columns: [
     {
       name: 'eventType',
-      columnLabel: translate('EventType'),
+      columnLabel: () => translate('EventType'),
       isVisible: true,
       isModifiable: false
     },
     {
       name: 'indexer',
-      label: 'Indexer',
+      label: () => translate('Indexer'),
       isSortable: false,
       isVisible: true
     },
     {
       name: 'query',
-      label: 'Query',
+      label: () => translate('Query'),
       isSortable: false,
       isVisible: true
     },
     {
       name: 'parameters',
-      label: 'Parameters',
+      label: () => translate('Parameters'),
+      isSortable: false,
+      isVisible: true
+    },
+    {
+      name: 'grabTitle',
+      label: () => translate('GrabTitle'),
       isSortable: false,
       isVisible: false
     },
     {
-      name: 'grabTitle',
-      label: 'Grab Title',
+      name: 'queryType',
+      label: () => translate('QueryType'),
       isSortable: false,
       isVisible: false
     },
     {
       name: 'categories',
-      label: 'Categories',
+      label: () => translate('Categories'),
       isSortable: false,
       isVisible: true
     },
     {
       name: 'date',
-      label: translate('Date'),
+      label: () => translate('Date'),
       isSortable: true,
       isVisible: true
     },
     {
       name: 'source',
-      label: 'Source',
+      label: () => translate('Source'),
+      isSortable: false,
+      isVisible: false
+    },
+    {
+      name: 'host',
+      label: () => translate('Host'),
       isSortable: false,
       isVisible: false
     },
     {
       name: 'elapsedTime',
-      label: 'Elapsed Time',
+      label: () => translate('ElapsedTime'),
       isSortable: false,
       isVisible: true
     },
     {
       name: 'details',
-      columnLabel: translate('Details'),
+      columnLabel: () => translate('Details'),
       isVisible: true,
       isModifiable: false
     }
@@ -95,12 +107,12 @@ export const defaultState = {
   filters: [
     {
       key: 'all',
-      label: translate('All'),
+      label: () => translate('All'),
       filters: []
     },
     {
       key: 'releaseGrabbed',
-      label: translate('Grabbed'),
+      label: () => translate('Grabbed'),
       filters: [
         {
           key: 'eventType',
@@ -111,7 +123,7 @@ export const defaultState = {
     },
     {
       key: 'indexerRss',
-      label: translate('IndexerRss'),
+      label: () => translate('IndexerRss'),
       filters: [
         {
           key: 'eventType',
@@ -122,7 +134,7 @@ export const defaultState = {
     },
     {
       key: 'indexerQuery',
-      label: translate('IndexerQuery'),
+      label: () => translate('IndexerQuery'),
       filters: [
         {
           key: 'eventType',
@@ -133,7 +145,7 @@ export const defaultState = {
     },
     {
       key: 'indexerAuth',
-      label: translate('IndexerAuth'),
+      label: () => translate('IndexerAuth'),
       filters: [
         {
           key: 'eventType',
@@ -144,7 +156,7 @@ export const defaultState = {
     },
     {
       key: 'failed',
-      label: translate('Failed'),
+      label: () => translate('Failed'),
       filters: [
         {
           key: 'successful',
@@ -152,6 +164,27 @@ export const defaultState = {
           type: filterTypes.EQUAL
         }
       ]
+    }
+  ],
+
+  filterBuilderProps: [
+    {
+      name: 'eventType',
+      label: () => translate('EventType'),
+      type: filterBuilderTypes.EQUAL,
+      valueType: filterBuilderValueTypes.HISTORY_EVENT_TYPE
+    },
+    {
+      name: 'indexerIds',
+      label: () => translate('Indexer'),
+      type: filterBuilderTypes.EQUAL,
+      valueType: filterBuilderValueTypes.INDEXER
+    },
+    {
+      name: 'successful',
+      label: () => translate('Successful'),
+      type: filterBuilderTypes.EQUAL,
+      valueType: filterBuilderValueTypes.BOOL
     }
   ]
 

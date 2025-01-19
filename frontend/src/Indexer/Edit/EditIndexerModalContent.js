@@ -26,6 +26,8 @@ function EditIndexerModalContent(props) {
     isTesting,
     saveError,
     item,
+    hasUsenetDownloadClients,
+    hasTorrentDownloadClients,
     onInputChange,
     onFieldChange,
     onModalClose,
@@ -39,6 +41,7 @@ function EditIndexerModalContent(props) {
   const {
     id,
     implementationName,
+    definitionName,
     name,
     enable,
     redirect,
@@ -47,13 +50,18 @@ function EditIndexerModalContent(props) {
     appProfileId,
     tags,
     fields,
-    priority
+    priority,
+    protocol,
+    downloadClientId
   } = item;
+
+  const indexerDisplayName = implementationName === definitionName ? implementationName : `${implementationName} (${definitionName})`;
+  const showDownloadClientInput = downloadClientId.value > 0 || protocol.value === 'usenet' && hasUsenetDownloadClients || protocol.value === 'torrent' && hasTorrentDownloadClients;
 
   return (
     <ModalContent onModalClose={onModalClose}>
       <ModalHeader>
-        {`${id ? translate('EditIndexer') : translate('AddIndexer')} - ${implementationName}`}
+        {id ? translate('EditIndexerImplementation', { implementationName: indexerDisplayName }) : translate('AddIndexerImplementation', { implementationName: indexerDisplayName })}
       </ModalHeader>
 
       <ModalBody>
@@ -89,7 +97,7 @@ function EditIndexerModalContent(props) {
                 <FormInputGroup
                   type={inputTypes.CHECK}
                   name="enable"
-                  helpTextWarning={supportsRss.value ? undefined : translate('RSSIsNotSupportedWithThisIndexer')}
+                  helpTextWarning={supportsRss.value ? undefined : translate('RssIsNotSupportedWithThisIndexer')}
                   {...enable}
                   onChange={onInputChange}
                 />
@@ -109,7 +117,7 @@ function EditIndexerModalContent(props) {
               </FormGroup>
 
               <FormGroup>
-                <FormLabel>{translate('AppProfile')}</FormLabel>
+                <FormLabel>{translate('SyncProfile')}</FormLabel>
 
                 <FormInputGroup
                   type={inputTypes.APP_PROFILE_SELECT}
@@ -136,6 +144,7 @@ function EditIndexerModalContent(props) {
                   }) :
                   null
               }
+
               <FormGroup
                 advancedSettings={advancedSettings}
                 isAdvanced={true}
@@ -153,6 +162,25 @@ function EditIndexerModalContent(props) {
                 />
               </FormGroup>
 
+              {showDownloadClientInput ?
+                <FormGroup
+                  advancedSettings={advancedSettings}
+                  isAdvanced={true}
+                >
+                  <FormLabel>{translate('DownloadClient')}</FormLabel>
+
+                  <FormInputGroup
+                    type={inputTypes.DOWNLOAD_CLIENT_SELECT}
+                    name="downloadClientId"
+                    helpText={translate('IndexerDownloadClientHelpText')}
+                    {...downloadClientId}
+                    includeAny={true}
+                    protocol={protocol.value}
+                    onChange={onInputChange}
+                  />
+                </FormGroup> : null
+              }
+
               <FormGroup>
                 <FormLabel>{translate('Tags')}</FormLabel>
 
@@ -160,6 +188,7 @@ function EditIndexerModalContent(props) {
                   type={inputTypes.TAG}
                   name="tags"
                   helpText={translate('IndexerTagsHelpText')}
+                  helpTextWarning={translate('IndexerTagsHelpTextWarning')}
                   {...tags}
                   onChange={onInputChange}
                 />
@@ -219,6 +248,8 @@ EditIndexerModalContent.propTypes = {
   isTesting: PropTypes.bool.isRequired,
   saveError: PropTypes.object,
   item: PropTypes.object.isRequired,
+  hasUsenetDownloadClients: PropTypes.bool.isRequired,
+  hasTorrentDownloadClients: PropTypes.bool.isRequired,
   onInputChange: PropTypes.func.isRequired,
   onFieldChange: PropTypes.func.isRequired,
   onModalClose: PropTypes.func.isRequired,

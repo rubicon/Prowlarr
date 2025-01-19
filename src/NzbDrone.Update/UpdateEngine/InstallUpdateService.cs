@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using NLog;
 using NzbDrone.Common.Disk;
@@ -90,6 +90,12 @@ namespace NzbDrone.Update.UpdateEngine
 
             Verify(installationFolder, processId);
 
+            if (installationFolder.EndsWith(@"\bin\Prowlarr") || installationFolder.EndsWith(@"/bin/Prowlarr"))
+            {
+                installationFolder = installationFolder.GetParentPath();
+                _logger.Info("Fixed Installation Folder: {0}", installationFolder);
+            }
+
             var appType = _detectApplicationType.GetAppType();
 
             _processProvider.FindProcessByName(ProcessProvider.PROWLARR_CONSOLE_PROCESS_NAME);
@@ -116,16 +122,13 @@ namespace NzbDrone.Update.UpdateEngine
 
                 try
                 {
-                    _logger.Info("Emptying installation folder");
-                    _diskProvider.EmptyFolder(installationFolder);
-
                     _logger.Info("Copying new files to target folder");
                     _diskTransferService.MirrorFolder(_appFolderInfo.GetUpdatePackageFolder(), installationFolder);
 
                     // Set executable flag on app
-                    if (OsInfo.IsOsx || (OsInfo.IsLinux && PlatformInfo.IsNetCore))
+                    if (OsInfo.IsOsx || OsInfo.IsLinux)
                     {
-                        _diskProvider.SetPermissions(Path.Combine(installationFolder, "Prowlarr"), "0755");
+                        _diskProvider.SetFilePermissions(Path.Combine(installationFolder, "Prowlarr"), "755", null);
                     }
                 }
                 catch (Exception e)
@@ -146,7 +149,7 @@ namespace NzbDrone.Update.UpdateEngine
                     _terminateNzbDrone.Terminate(processId);
 
                     _logger.Info("Waiting for external auto-restart.");
-                    for (int i = 0; i < 5; i++)
+                    for (var i = 0; i < 10; i++)
                     {
                         System.Threading.Thread.Sleep(1000);
 

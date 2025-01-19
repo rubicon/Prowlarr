@@ -10,7 +10,7 @@ function parseValue(props, value) {
   } = props;
 
   if (value == null || value === '') {
-    return min;
+    return null;
   }
 
   let newValue = isFloat ? parseFloat(value) : parseInt(value);
@@ -41,7 +41,7 @@ class NumberInput extends Component {
   componentDidUpdate(prevProps, prevState) {
     const { value } = this.props;
 
-    if (value !== prevProps.value && !this.state.isFocused) {
+    if (!isNaN(value) && value !== prevProps.value && !this.state.isFocused) {
       this.setState({
         value: value == null ? '' : value.toString()
       });

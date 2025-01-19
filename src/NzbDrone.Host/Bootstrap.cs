@@ -1,6 +1,6 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
+using System.Data.SQLite;
 using System.IO;
 using System.Reflection;
 using System.Security.Cryptography;
@@ -8,21 +8,24 @@ using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using DryIoc;
 using DryIoc.Microsoft.DependencyInjection;
-using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Hosting.WindowsServices;
 using NLog;
+using Npgsql;
 using NzbDrone.Common.Composition.Extensions;
 using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Common.Exceptions;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Instrumentation;
 using NzbDrone.Common.Instrumentation.Extensions;
+using NzbDrone.Common.Options;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Datastore.Extensions;
+using PostgresOptions = NzbDrone.Core.Datastore.PostgresOptions;
 
 namespace NzbDrone.Host
 {
@@ -44,7 +47,7 @@ namespace NzbDrone.Host
             try
             {
                 Logger.Info("Starting Prowlarr - {0} - Version {1}",
-                            Process.GetCurrentProcess().MainModule.FileName,
+                            Environment.ProcessPath,
                             Assembly.GetExecutingAssembly().GetName().Version);
 
                 var startupContext = new StartupContext(args);
@@ -52,6 +55,7 @@ namespace NzbDrone.Host
                 Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
                 var appMode = GetApplicationMode(startupContext);
+                var config = GetConfiguration(startupContext);
 
                 switch (appMode)
                 {
@@ -80,12 +84,36 @@ namespace NzbDrone.Host
                     // Utility mode
                     default:
                     {
-                        new Container(rules => rules.WithNzbDroneRules())
-                            .AutoAddServices(ASSEMBLIES)
-                            .AddNzbDroneLogger()
-                            .AddStartupContext(startupContext)
-                            .Resolve<UtilityModeRouter>()
-                            .Route(appMode);
+                        new HostBuilder()
+                            .UseServiceProviderFactory(new DryIocServiceProviderFactory(new Container(rules => rules.WithNzbDroneRules())))
+                            .ConfigureContainer<IContainer>(c =>
+                            {
+                                c.AutoAddServices(Bootstrap.ASSEMBLIES)
+                                    .AddNzbDroneLogger()
+                                    .AddDatabase()
+                                    .AddStartupContext(startupContext)
+                                    .Resolve<UtilityModeRouter>()
+                                    .Route(appMode);
+
+                                if (config.GetValue(nameof(ConfigFileProvider.LogDbEnabled), true))
+                                {
+                                    c.AddLogDatabase();
+                                }
+                                else
+                                {
+                                    c.AddDummyLogDatabase();
+                                }
+                            })
+                            .ConfigureServices(services =>
+                            {
+                                services.Configure<PostgresOptions>(config.GetSection("Prowlarr:Postgres"));
+                                services.Configure<AppOptions>(config.GetSection("Prowlarr:App"));
+                                services.Configure<AuthOptions>(config.GetSection("Prowlarr:Auth"));
+                                services.Configure<ServerOptions>(config.GetSection("Prowlarr:Server"));
+                                services.Configure<LogOptions>(config.GetSection("Prowlarr:Log"));
+                                services.Configure<UpdateOptions>(config.GetSection("Prowlarr:Update"));
+                            }).Build();
+
                         break;
                     }
                 }
@@ -99,18 +127,25 @@ namespace NzbDrone.Host
                 Logger.Info(e.Message);
                 LogManager.Configuration = null;
             }
+
+            // Make sure there are no lingering database connections
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            SQLiteConnection.ClearAllPools();
+            NpgsqlConnection.ClearAllPools();
         }
 
         public static IHostBuilder CreateConsoleHostBuilder(string[] args, StartupContext context)
         {
             var config = GetConfiguration(context);
 
-            var bindAddress = config.GetValue(nameof(ConfigFileProvider.BindAddress), "*");
-            var port = config.GetValue(nameof(ConfigFileProvider.Port), ConfigFileProvider.DEFAULT_PORT);
-            var sslPort = config.GetValue(nameof(ConfigFileProvider.SslPort), ConfigFileProvider.DEFAULT_SSL_PORT);
-            var enableSsl = config.GetValue(nameof(ConfigFileProvider.EnableSsl), false);
-            var sslCertPath = config.GetValue<string>(nameof(ConfigFileProvider.SslCertPath));
-            var sslCertPassword = config.GetValue<string>(nameof(ConfigFileProvider.SslCertPassword));
+            var bindAddress = config.GetValue<string>($"Prowlarr:Server:{nameof(ServerOptions.BindAddress)}") ?? config.GetValue(nameof(ConfigFileProvider.BindAddress), "*");
+            var port = config.GetValue<int?>($"Prowlarr:Server:{nameof(ServerOptions.Port)}") ?? config.GetValue(nameof(ConfigFileProvider.Port), ConfigFileProvider.DEFAULT_PORT);
+            var sslPort = config.GetValue<int?>($"Prowlarr:Server:{nameof(ServerOptions.SslPort)}") ?? config.GetValue(nameof(ConfigFileProvider.SslPort), ConfigFileProvider.DEFAULT_SSL_PORT);
+            var enableSsl = config.GetValue<bool?>($"Prowlarr:Server:{nameof(ServerOptions.EnableSsl)}") ?? config.GetValue(nameof(ConfigFileProvider.EnableSsl), false);
+            var sslCertPath = config.GetValue<string>($"Prowlarr:Server:{nameof(ServerOptions.SslCertPath)}") ?? config.GetValue<string>(nameof(ConfigFileProvider.SslCertPath));
+            var sslCertPassword = config.GetValue<string>($"Prowlarr:Server:{nameof(ServerOptions.SslCertPassword)}") ?? config.GetValue<string>(nameof(ConfigFileProvider.SslCertPassword));
+            var logDbEnabled = config.GetValue<bool?>($"Prowlarr:Log:{nameof(LogOptions.DbEnabled)}") ?? config.GetValue(nameof(ConfigFileProvider.LogDbEnabled), true);
 
             var urls = new List<string> { BuildUrl("http", bindAddress, port) };
 
@@ -128,6 +163,29 @@ namespace NzbDrone.Host
                         .AddNzbDroneLogger()
                         .AddDatabase()
                         .AddStartupContext(context);
+
+                    if (logDbEnabled)
+                    {
+                        c.AddLogDatabase();
+                    }
+                    else
+                    {
+                        c.AddDummyLogDatabase();
+                    }
+                })
+                .ConfigureServices(services =>
+                {
+                    services.Configure<PostgresOptions>(config.GetSection("Prowlarr:Postgres"));
+                    services.Configure<AppOptions>(config.GetSection("Prowlarr:App"));
+                    services.Configure<AuthOptions>(config.GetSection("Prowlarr:Auth"));
+                    services.Configure<ServerOptions>(config.GetSection("Prowlarr:Server"));
+                    services.Configure<LogOptions>(config.GetSection("Prowlarr:Log"));
+                    services.Configure<UpdateOptions>(config.GetSection("Prowlarr:Update"));
+                    services.Configure<FormOptions>(x =>
+                    {
+                        //Double the default multipart body length from 128 MB to 256 MB
+                        x.MultipartBodyLengthLimit = 268435456;
+                    });
                 })
                 .ConfigureWebHost(builder =>
                 {
@@ -196,10 +254,22 @@ namespace NzbDrone.Host
         private static IConfiguration GetConfiguration(StartupContext context)
         {
             var appFolder = new AppFolderInfo(context);
-            return new ConfigurationBuilder()
-                .AddXmlFile(appFolder.GetConfigPath(), optional: true, reloadOnChange: false)
-                .AddInMemoryCollection(new List<KeyValuePair<string, string>> { new ("dataProtectionFolder", appFolder.GetDataProtectionPath()) })
-                .Build();
+            var configPath = appFolder.GetConfigPath();
+
+            try
+            {
+                return new ConfigurationBuilder()
+                    .AddXmlFile(configPath, optional: true, reloadOnChange: false)
+                    .AddInMemoryCollection(new List<KeyValuePair<string, string>> { new ("dataProtectionFolder", appFolder.GetDataProtectionPath()) })
+                    .AddEnvironmentVariables()
+                    .Build();
+            }
+            catch (InvalidDataException ex)
+            {
+                Logger.Error(ex, ex.Message);
+
+                throw new InvalidConfigFileException($"{configPath} is corrupt or invalid. Please delete the config file and Prowlarr will recreate it.", ex);
+            }
         }
 
         private static string BuildUrl(string scheme, string bindAddress, int port)

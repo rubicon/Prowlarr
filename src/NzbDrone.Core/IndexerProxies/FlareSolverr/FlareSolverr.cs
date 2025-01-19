@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
+using System.Net.Http;
 using FluentValidation.Results;
 using Newtonsoft.Json;
 using NLog;
@@ -9,7 +10,9 @@ using NzbDrone.Common.Cache;
 using NzbDrone.Common.Cloud;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
+using NzbDrone.Common.Http.Proxy;
 using NzbDrone.Common.Serializer;
+using NzbDrone.Core.Http.CloudFlare;
 using NzbDrone.Core.Localization;
 using NzbDrone.Core.Validation;
 
@@ -17,12 +20,13 @@ namespace NzbDrone.Core.IndexerProxies.FlareSolverr
 {
     public class FlareSolverr : HttpIndexerProxyBase<FlareSolverrSettings>
     {
-        private static readonly HashSet<string> CloudflareServerNames = new HashSet<string> { "cloudflare", "cloudflare-nginx" };
         private readonly ICached<string> _cache;
+        private readonly IHttpProxySettingsProvider _proxySettingsProvider;
 
-        public FlareSolverr(IProwlarrCloudRequestBuilder cloudRequestBuilder, IHttpClient httpClient, Logger logger, ILocalizationService localizationService, ICacheManager cacheManager)
+        public FlareSolverr(IHttpProxySettingsProvider proxySettingsProvider, IProwlarrCloudRequestBuilder cloudRequestBuilder, IHttpClient httpClient, Logger logger, ILocalizationService localizationService, ICacheManager cacheManager)
             : base(cloudRequestBuilder, httpClient, logger, localizationService)
         {
+            _proxySettingsProvider = proxySettingsProvider;
             _cache = cacheManager.GetCache<string>(typeof(string), "UserAgent");
         }
 
@@ -44,7 +48,7 @@ namespace NzbDrone.Core.IndexerProxies.FlareSolverr
 
         public override HttpResponse PostResponse(HttpResponse response)
         {
-            if (!IsCloudflareProtected(response))
+            if (!CloudFlareDetectionService.IsCloudflareProtected(response))
             {
                 _logger.Debug("CF Protection not detected, returning original response");
                 return response;
@@ -52,14 +56,12 @@ namespace NzbDrone.Core.IndexerProxies.FlareSolverr
 
             var flaresolverrResponse = _httpClient.Execute(GenerateFlareSolverrRequest(response.Request));
 
-            FlareSolverrResponse result = null;
-
             if (flaresolverrResponse.StatusCode != HttpStatusCode.OK && flaresolverrResponse.StatusCode != HttpStatusCode.InternalServerError)
             {
                 throw new FlareSolverrException("HTTP StatusCode not 200 or 500. Status is :" + response.StatusCode);
             }
 
-            result = JsonConvert.DeserializeObject<FlareSolverrResponse>(flaresolverrResponse.Content);
+            var result = JsonConvert.DeserializeObject<FlareSolverrResponse>(flaresolverrResponse.Content);
 
             var newRequest = response.Request;
 
@@ -69,24 +71,10 @@ namespace NzbDrone.Core.IndexerProxies.FlareSolverr
 
             InjectCookies(newRequest, result);
 
-            //Request again with User-Agent and Cookies from Flaresolvrr
+            //Request again with User-Agent and Cookies from Flaresolverr
             var finalResponse = _httpClient.Execute(newRequest);
 
             return finalResponse;
-        }
-
-        private static bool IsCloudflareProtected(HttpResponse response)
-        {
-            // check status code
-            if (response.StatusCode.Equals(HttpStatusCode.ServiceUnavailable) ||
-                response.StatusCode.Equals(HttpStatusCode.Forbidden))
-            {
-                // check response headers
-                return response.Headers.Any(i =>
-                    i.Key != null && i.Key.ToLower() == "server" && CloudflareServerNames.Contains(i.Value.ToLower()));
-            }
-
-            return false;
         }
 
         private void InjectCookies(HttpRequest request, FlareSolverrResponse flareSolverrResponse)
@@ -112,24 +100,33 @@ namespace NzbDrone.Core.IndexerProxies.FlareSolverr
             FlareSolverrRequest req;
 
             var url = request.Url.ToString();
-            var userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/81.0.4044.138 Safari/537.36";
             var maxTimeout = Settings.RequestTimeout * 1000;
 
-            if (request.Method == HttpMethod.GET)
+            var proxySettings = _proxySettingsProvider.GetProxySettings();
+            var proxyUrl = proxySettings != null ? GetProxyUri(proxySettings) : null;
+
+            var requestProxy = new FlareSolverrProxy
+            {
+                Url = proxyUrl?.OriginalString,
+                Username = proxySettings != null && proxySettings.Username.IsNotNullOrWhiteSpace() ? proxySettings.Username : null,
+                Password = proxySettings != null && proxySettings.Password.IsNotNullOrWhiteSpace() ? proxySettings.Password : null
+            };
+
+            if (request.Method == HttpMethod.Get)
             {
                 req = new FlareSolverrRequestGet
                 {
                     Cmd = "request.get",
                     Url = url,
                     MaxTimeout = maxTimeout,
-                    UserAgent = userAgent
+                    Proxy = requestProxy
                 };
             }
-            else if (request.Method == HttpMethod.POST)
+            else if (request.Method == HttpMethod.Post)
             {
-                var contentTypeType = request.Headers.ContentType;
+                var contentTypeType = request.Headers.ContentType.ToLower() ?? "<null>";
 
-                if (contentTypeType == "application/x-www-form-urlencoded")
+                if (contentTypeType.Contains("application/x-www-form-urlencoded"))
                 {
                     var contentTypeValue = request.Headers.ContentType.ToString();
                     var postData = request.GetContent();
@@ -145,10 +142,11 @@ namespace NzbDrone.Core.IndexerProxies.FlareSolverr
                             ContentLength = null
                         },
                         MaxTimeout = maxTimeout,
-                        UserAgent = userAgent
+                        Proxy = requestProxy
                     };
                 }
-                else if (contentTypeType.Contains("multipart/form-data"))
+                else if (contentTypeType.Contains("multipart/form-data")
+                         || contentTypeType.Contains("text/html"))
                 {
                     //TODO Implement - check if we just need to pass the content-type with the relevant headers
                     throw new FlareSolverrException("Unimplemented POST Content-Type: " + request.Headers.ContentType);
@@ -167,10 +165,13 @@ namespace NzbDrone.Core.IndexerProxies.FlareSolverr
             var newRequest = new HttpRequest(apiUrl, HttpAccept.Json);
 
             newRequest.Headers.ContentType = "application/json";
-            newRequest.Method = HttpMethod.POST;
+            newRequest.Method = HttpMethod.Post;
+            newRequest.LogResponseContent = true;
+            newRequest.RequestTimeout = TimeSpan.FromSeconds(Settings.RequestTimeout + 5);
             newRequest.SetContent(req.ToJson());
+            newRequest.ContentSummary = req.ToJson(Formatting.None);
 
-            _logger.Debug("Applying FlareSolverr Proxy {0} to request {1}", Name, request.Url);
+            _logger.Debug("Cloudflare Detected, Applying FlareSolverr Proxy {0} to request {1}", Name, request.Url);
 
             return newRequest;
         }
@@ -189,53 +190,71 @@ namespace NzbDrone.Core.IndexerProxies.FlareSolverr
 
                 if (response.StatusCode != HttpStatusCode.OK)
                 {
-                    _logger.Error("Proxy Health Check failed: {0}", response.StatusCode);
-                    failures.Add(new NzbDroneValidationFailure("Host", string.Format(_localizationService.GetLocalizedString("ProxyCheckBadRequestMessage"), response.StatusCode)));
+                    _logger.Error("Proxy validation failed: {0}", response.StatusCode);
+                    failures.Add(new NzbDroneValidationFailure("Host", _localizationService.GetLocalizedString("ProxyValidationBadRequest", new Dictionary<string, object> { { "statusCode", response.StatusCode } })));
                 }
 
                 var result = JsonConvert.DeserializeObject<FlareSolverrResponse>(response.Content);
             }
             catch (Exception ex)
             {
-                _logger.Error(ex, "Proxy Health Check failed");
-                failures.Add(new NzbDroneValidationFailure("Host", string.Format(_localizationService.GetLocalizedString("ProxyCheckFailedToTestMessage"), request.Url.Host)));
+                _logger.Error(ex, "Proxy validation failed");
+                failures.Add(new NzbDroneValidationFailure("Host", _localizationService.GetLocalizedString("ProxyValidationUnableToConnect", new Dictionary<string, object> { { "exceptionMessage", ex.Message } })));
             }
 
             return new ValidationResult(failures);
         }
 
-        public class FlareSolverrRequest
+        private Uri GetProxyUri(HttpProxySettings proxySettings)
+        {
+            return proxySettings.Type switch
+            {
+                ProxyType.Http => new Uri("http://" + proxySettings.Host + ":" + proxySettings.Port),
+                ProxyType.Socks4 => new Uri("socks4://" + proxySettings.Host + ":" + proxySettings.Port),
+                ProxyType.Socks5 => new Uri("socks5://" + proxySettings.Host + ":" + proxySettings.Port),
+                _ => null
+            };
+        }
+
+        private class FlareSolverrRequest
         {
             public string Cmd { get; set; }
             public string Url { get; set; }
-            public string UserAgent { get; set; }
             public Cookie[] Cookies { get; set; }
+            public FlareSolverrProxy Proxy { get; set; }
         }
 
-        public class FlareSolverrRequestGet : FlareSolverrRequest
+        private class FlareSolverrRequestGet : FlareSolverrRequest
         {
             public string Headers { get; set; }
             public int MaxTimeout { get; set; }
         }
 
-        public class FlareSolverrRequestPost : FlareSolverrRequest
+        private class FlareSolverrRequestPost : FlareSolverrRequest
         {
             public string PostData { get; set; }
             public int MaxTimeout { get; set; }
         }
 
-        public class FlareSolverrRequestPostUrlEncoded : FlareSolverrRequestPost
+        private class FlareSolverrRequestPostUrlEncoded : FlareSolverrRequestPost
         {
             public HeadersPost Headers { get; set; }
         }
 
-        public class HeadersPost
+        private class FlareSolverrProxy
+        {
+            public string Url { get; set; }
+            public string Username { get; set; }
+            public string Password { get; set; }
+        }
+
+        private class HeadersPost
         {
             public string ContentType { get; set; }
             public string ContentLength { get; set; }
         }
 
-        public class FlareSolverrResponse
+        private class FlareSolverrResponse
         {
             public string Status { get; set; }
             public string Message { get; set; }
@@ -245,7 +264,7 @@ namespace NzbDrone.Core.IndexerProxies.FlareSolverr
             public Solution Solution { get; set; }
         }
 
-        public class Solution
+        private class Solution
         {
             public string Url { get; set; }
             public string Status { get; set; }
@@ -255,7 +274,7 @@ namespace NzbDrone.Core.IndexerProxies.FlareSolverr
             public string UserAgent { get; set; }
         }
 
-        public class Cookie
+        private class Cookie
         {
             public string Name { get; set; }
             public string Value { get; set; }
@@ -272,7 +291,7 @@ namespace NzbDrone.Core.IndexerProxies.FlareSolverr
             public System.Net.Cookie ToCookieObj() => new System.Net.Cookie(Name, Value);
         }
 
-        public class Headers
+        private class Headers
         {
             public string Status { get; set; }
             public string Date { get; set; }

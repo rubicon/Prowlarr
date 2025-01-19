@@ -1,20 +1,24 @@
 using System;
 using System.Collections.Generic;
-using NLog;
+using System.Collections.Specialized;
+using System.Linq;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.IndexerSearch.Definitions;
+using NzbDrone.Core.Parser;
 
-namespace NzbDrone.Core.Indexers.PassThePopcorn
+namespace NzbDrone.Core.Indexers.Definitions.PassThePopcorn
 {
     public class PassThePopcornRequestGenerator : IIndexerRequestGenerator
     {
-        public PassThePopcornSettings Settings { get; set; }
+        private readonly PassThePopcornSettings _settings;
+        private readonly IndexerCapabilities _capabilities;
 
-        public IDictionary<string, string> Cookies { get; set; }
-
-        public IIndexerHttpClient HttpClient { get; set; }
-        public Logger Logger { get; set; }
+        public PassThePopcornRequestGenerator(PassThePopcornSettings settings, IndexerCapabilities capabilities)
+        {
+            _settings = settings;
+            _capabilities = capabilities;
+        }
 
         public IndexerPageableRequestChain GetSearchRequests(MovieSearchCriteria searchCriteria)
         {
@@ -22,40 +26,14 @@ namespace NzbDrone.Core.Indexers.PassThePopcorn
 
             if (searchCriteria.ImdbId.IsNotNullOrWhiteSpace())
             {
-                pageableRequests.Add(GetRequest(searchCriteria.FullImdbId));
+                pageableRequests.Add(GetRequest(searchCriteria.FullImdbId, searchCriteria));
             }
             else
             {
-                pageableRequests.Add(GetRequest(string.Format("{0}", searchCriteria.SearchTerm)));
+                pageableRequests.Add(GetRequest($"{searchCriteria.SanitizedSearchTerm}", searchCriteria));
             }
 
             return pageableRequests;
-        }
-
-        public Func<IDictionary<string, string>> GetCookies { get; set; }
-        public Action<IDictionary<string, string>, DateTime?> CookiesUpdater { get; set; }
-
-        private IEnumerable<IndexerRequest> GetRequest(string searchParameters)
-        {
-            var request =
-                new IndexerRequest(
-                    $"{Settings.BaseUrl.Trim().TrimEnd('/')}/torrents.php?action=advanced&json=noredirect&searchstr={searchParameters}",
-                    HttpAccept.Json);
-
-            request.HttpRequest.Headers["ApiUser"] = Settings.APIUser;
-            request.HttpRequest.Headers["ApiKey"] = Settings.APIKey;
-
-            if (Settings.APIKey.IsNullOrWhiteSpace())
-            {
-                foreach (var cookie in Cookies)
-                {
-                    request.HttpRequest.Cookies[cookie.Key] = cookie.Value;
-                }
-
-                CookiesUpdater(Cookies, DateTime.Now + TimeSpan.FromDays(30));
-            }
-
-            yield return request;
         }
 
         public IndexerPageableRequestChain GetSearchRequests(MusicSearchCriteria searchCriteria)
@@ -65,7 +43,18 @@ namespace NzbDrone.Core.Indexers.PassThePopcorn
 
         public IndexerPageableRequestChain GetSearchRequests(TvSearchCriteria searchCriteria)
         {
-            return new IndexerPageableRequestChain();
+            var pageableRequests = new IndexerPageableRequestChain();
+
+            if (searchCriteria.ImdbId.IsNotNullOrWhiteSpace())
+            {
+                pageableRequests.Add(GetRequest(searchCriteria.FullImdbId, searchCriteria));
+            }
+            else
+            {
+                pageableRequests.Add(GetRequest($"{searchCriteria.SanitizedTvSearchString}", searchCriteria));
+            }
+
+            return pageableRequests;
         }
 
         public IndexerPageableRequestChain GetSearchRequests(BookSearchCriteria searchCriteria)
@@ -77,9 +66,58 @@ namespace NzbDrone.Core.Indexers.PassThePopcorn
         {
             var pageableRequests = new IndexerPageableRequestChain();
 
-            pageableRequests.Add(GetRequest(string.Format("{0}", searchCriteria.SearchTerm)));
+            pageableRequests.Add(GetRequest($"{searchCriteria.SanitizedSearchTerm}", searchCriteria));
 
             return pageableRequests;
         }
+
+        private IEnumerable<IndexerRequest> GetRequest(string searchTerm, SearchCriteriaBase searchCriteria)
+        {
+            var parameters = new NameValueCollection
+            {
+                { "action", "advanced" },
+                { "json", "noredirect" },
+                { "grouping", "0" },
+                { "searchstr", searchTerm }
+            };
+
+            if (_settings.FreeleechOnly)
+            {
+                parameters.Set("freetorrent", "1");
+            }
+
+            if (_settings.GoldenPopcornOnly)
+            {
+                parameters.Set("scene", "2");
+            }
+
+            var queryCats = _capabilities.Categories
+                .MapTorznabCapsToTrackers(searchCriteria.Categories)
+                .Select(int.Parse)
+                .Distinct()
+                .ToList();
+
+            if (searchCriteria.IsRssSearch && queryCats.Any())
+            {
+                queryCats.ForEach(cat => parameters.Set($"filter_cat[{cat}]", "1"));
+            }
+
+            if (searchCriteria.Limit is > 0 && searchCriteria.Offset is > 0)
+            {
+                var page = (int)(searchCriteria.Offset / searchCriteria.Limit) + 1;
+                parameters.Set("page", page.ToString());
+            }
+
+            var searchUrl = $"{_settings.BaseUrl.Trim().TrimEnd('/')}/torrents.php?{parameters.GetQueryString()}";
+
+            var request = new IndexerRequest(searchUrl, HttpAccept.Json);
+            request.HttpRequest.Headers.Add("ApiUser", _settings.APIUser);
+            request.HttpRequest.Headers.Add("ApiKey", _settings.APIKey);
+
+            yield return request;
+        }
+
+        public Func<IDictionary<string, string>> GetCookies { get; set; }
+        public Action<IDictionary<string, string>, DateTime?> CookiesUpdater { get; set; }
     }
 }

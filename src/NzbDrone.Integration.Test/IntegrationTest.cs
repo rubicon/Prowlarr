@@ -1,10 +1,14 @@
+using System;
+using System.Linq;
 using System.Threading;
 using NLog;
 using NUnit.Framework;
 using NzbDrone.Common.Extensions;
-using NzbDrone.Core.Indexers.FileList;
+using NzbDrone.Core.Datastore;
+using NzbDrone.Core.Datastore.Migration.Framework;
+using NzbDrone.Core.Indexers.Newznab;
 using NzbDrone.Test.Common;
-using Prowlarr.Http.ClientSchema;
+using NzbDrone.Test.Common.Datastore;
 
 namespace NzbDrone.Integration.Test
 {
@@ -19,6 +23,8 @@ namespace NzbDrone.Integration.Test
 
         protected int Port { get; private set; }
 
+        protected PostgresOptions PostgresOptions { get; set; } = new ();
+
         protected override string RootUrl => $"http://localhost:{Port}/";
 
         protected override string ApiKey => _runner.ApiKey;
@@ -27,7 +33,14 @@ namespace NzbDrone.Integration.Test
         {
             Port = Interlocked.Increment(ref StaticPort);
 
-            _runner = new NzbDroneRunner(LogManager.GetCurrentClassLogger(), Port);
+            PostgresOptions = PostgresDatabase.GetTestOptions();
+
+            if (PostgresOptions?.Host != null)
+            {
+                CreatePostgresDb(PostgresOptions);
+            }
+
+            _runner = new NzbDroneRunner(LogManager.GetCurrentClassLogger(), PostgresOptions, Port);
             _runner.Kill();
 
             _runner.Start();
@@ -35,17 +48,21 @@ namespace NzbDrone.Integration.Test
 
         protected override void InitializeTestTarget()
         {
-            WaitForCompletion(() => Tasks.All().SelectList(x => x.TaskName).Contains("CheckHealth"));
+            WaitForCompletion(() => Tasks.All().SelectList(x => x.TaskName).Contains("CheckHealth"), 20000);
 
-            Indexers.Post(new Prowlarr.Api.V1.Indexers.IndexerResource
+            var indexer = Indexers.Schema().FirstOrDefault(i => i.Implementation == nameof(Newznab));
+
+            if (indexer == null)
             {
-                Enable = false,
-                ConfigContract = nameof(FileListSettings),
-                Implementation = nameof(FileList),
-                Name = "NewznabTest",
-                Protocol = Core.Indexers.DownloadProtocol.Usenet,
-                Fields = SchemaBuilder.ToSchema(new FileListSettings())
-            });
+                throw new NullReferenceException("Expected valid indexer schema, found null");
+            }
+
+            indexer.Enable = false;
+            indexer.ConfigContract = nameof(NewznabSettings);
+            indexer.Implementation = nameof(Newznab);
+            indexer.Name = "NewznabTest";
+            indexer.Protocol = Core.Indexers.DownloadProtocol.Usenet;
+            indexer.AppProfileId = 1;
 
             // Change Console Log Level to Debug so we get more details.
             var config = HostConfig.Get(1);
@@ -56,6 +73,22 @@ namespace NzbDrone.Integration.Test
         protected override void StopTestTarget()
         {
             _runner.Kill();
+            if (PostgresOptions?.Host != null)
+            {
+                DropPostgresDb(PostgresOptions);
+            }
+        }
+
+        private static void CreatePostgresDb(PostgresOptions options)
+        {
+            PostgresDatabase.Create(options, MigrationType.Main);
+            PostgresDatabase.Create(options, MigrationType.Log);
+        }
+
+        private static void DropPostgresDb(PostgresOptions options)
+        {
+            PostgresDatabase.Drop(options, MigrationType.Main);
+            PostgresDatabase.Drop(options, MigrationType.Log);
         }
     }
 }

@@ -16,37 +16,47 @@ namespace NzbDrone.Core.IndexerSearch.Definitions
         public int? RId { get; set; }
         public int? TvMazeId { get; set; }
         public int? TraktId { get; set; }
+        public int? TmdbId { get; set; }
+        public int? DoubanId { get; set; }
+        public int? Year { get; set; }
+        public string Genre { get; set; }
 
-        public string SanitizedTvSearchString => (SanitizedSearchTerm + " " + EpisodeSearchString).Trim();
+        public string SanitizedTvSearchString => $"{SanitizedSearchTerm} {EpisodeSearchString}".Trim();
         public string EpisodeSearchString => GetEpisodeSearchString();
 
         public string FullImdbId => ParseUtil.GetFullImdbId(ImdbId);
 
-        public override bool RssSearch
-        {
-            get
-            {
-                if (SearchTerm.IsNullOrWhiteSpace() && ImdbId.IsNullOrWhiteSpace() && !TvdbId.HasValue && !RId.HasValue && !TraktId.HasValue && !TvMazeId.HasValue)
-                {
-                    return true;
-                }
+        public override bool IsRssSearch =>
+            SearchTerm.IsNullOrWhiteSpace() &&
+            !IsIdSearch;
 
-                return false;
-            }
-        }
+        public override bool IsIdSearch =>
+            ImdbId.IsNotNullOrWhiteSpace() ||
+            TvdbId.HasValue ||
+            RId.HasValue ||
+            TraktId.HasValue ||
+            TvMazeId.HasValue ||
+            TmdbId.HasValue ||
+            DoubanId.HasValue;
 
         public override string SearchQuery
         {
             get
             {
-                var searchQueryTerm = $"Term: []";
+                var searchQueryTerm = "Term: []";
                 var searchEpisodeTerm = $" for Season / Episode:[{EpisodeSearchString}]";
                 if (SearchTerm.IsNotNullOrWhiteSpace())
                 {
                     searchQueryTerm = $"Term: [{SearchTerm}]";
                 }
 
-                if (!ImdbId.IsNotNullOrWhiteSpace() && !TvdbId.HasValue && !RId.HasValue && !TraktId.HasValue)
+                if (!ImdbId.IsNotNullOrWhiteSpace() &&
+                    !TvdbId.HasValue &&
+                    !RId.HasValue &&
+                    !TraktId.HasValue &&
+                    !TvMazeId.HasValue &&
+                    !TmdbId.HasValue &&
+                    !DoubanId.HasValue)
                 {
                     return $"{searchQueryTerm}{searchEpisodeTerm}";
                 }
@@ -74,6 +84,21 @@ namespace NzbDrone.Core.IndexerSearch.Definitions
                     builder.Append($" TraktId:[{TraktId}]");
                 }
 
+                if (TvMazeId.HasValue)
+                {
+                    builder.Append($" TvMazeId:[{TvMazeId}]");
+                }
+
+                if (TmdbId.HasValue)
+                {
+                    builder.Append($" TmdbId:[{TmdbId}]");
+                }
+
+                if (DoubanId.HasValue)
+                {
+                    builder.Append($" DoubanId:[{DoubanId}]");
+                }
+
                 builder = builder.Append(searchEpisodeTerm);
                 return builder.ToString().Trim();
             }
@@ -81,29 +106,29 @@ namespace NzbDrone.Core.IndexerSearch.Definitions
 
         private string GetEpisodeSearchString()
         {
-            if (Season == null || Season == 0)
+            if (Season is null or 0)
             {
                 return string.Empty;
             }
 
             string episodeString;
-            if (DateTime.TryParseExact(string.Format("{0} {1}", Season, Episode), "yyyy MM/dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var showDate))
+            if (DateTime.TryParseExact($"{Season} {Episode}", "yyyy MM/dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var showDate))
             {
-                episodeString = showDate.ToString("yyyy.MM.dd");
+                episodeString = showDate.ToString("yyyy.MM.dd", CultureInfo.InvariantCulture);
             }
             else if (Episode.IsNullOrWhiteSpace())
             {
-                episodeString = string.Format("S{0:00}", Season);
+                episodeString = $"S{Season:00}";
             }
             else
             {
                 try
                 {
-                    episodeString = string.Format("S{0:00}E{1:00}", Season, ParseUtil.CoerceInt(Episode));
+                    episodeString = $"S{Season:00}E{ParseUtil.CoerceInt(Episode):00}";
                 }
                 catch (FormatException)
                 {
-                    episodeString = string.Format("S{0:00}E{1}", Season, Episode);
+                    episodeString = $"S{Season:00}E{Episode}";
                 }
             }
 

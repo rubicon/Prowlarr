@@ -1,29 +1,27 @@
+using System;
 using System.Collections.Generic;
 using NLog;
-using NzbDrone.Common.Cache;
-using NzbDrone.Common.Http;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Messaging.Events;
 
-namespace NzbDrone.Core.Indexers.PassThePopcorn
+namespace NzbDrone.Core.Indexers.Definitions.PassThePopcorn
 {
     public class PassThePopcorn : TorrentIndexerBase<PassThePopcornSettings>
     {
         public override string Name => "PassThePopcorn";
-        public override string[] IndexerUrls => new string[] { "https://passthepopcorn.me" };
+        public override string[] IndexerUrls => new[] { "https://passthepopcorn.me" };
         public override string Description => "PassThePopcorn (PTP) is a Private site for MOVIES / TV";
-        public override DownloadProtocol Protocol => DownloadProtocol.Torrent;
         public override IndexerPrivacy Privacy => IndexerPrivacy.Private;
         public override bool SupportsRss => true;
         public override bool SupportsSearch => true;
+        public override bool SupportsPagination => true;
+        public override int PageSize => 50;
+        public override TimeSpan RateLimit => TimeSpan.FromSeconds(4);
 
         public override IndexerCapabilities Capabilities => SetCapabilities();
 
-        public override int PageSize => 50;
-
         public PassThePopcorn(IIndexerHttpClient httpClient,
             IEventAggregator eventAggregator,
-            ICacheManager cacheManager,
             IIndexerStatusService indexerStatusService,
             IConfigService configService,
             Logger logger)
@@ -33,21 +31,23 @@ namespace NzbDrone.Core.Indexers.PassThePopcorn
 
         public override IIndexerRequestGenerator GetRequestGenerator()
         {
-            return new PassThePopcornRequestGenerator()
-            {
-                Settings = Settings,
-                HttpClient = _httpClient,
-                Logger = _logger
-            };
+            return new PassThePopcornRequestGenerator(Settings, Capabilities);
+        }
+
+        public override IParseIndexerResponse GetParser()
+        {
+            return new PassThePopcornParser(Settings);
         }
 
         private IndexerCapabilities SetCapabilities()
         {
             var caps = new IndexerCapabilities
             {
-                SearchParams = new List<SearchParam>
+                LimitsDefault = PageSize,
+                LimitsMax = PageSize,
+                TvSearchParams = new List<TvSearchParam>
                 {
-                    SearchParam.Q
+                    TvSearchParam.Q, TvSearchParam.Season, TvSearchParam.Ep, TvSearchParam.ImdbId
                 },
                 MovieSearchParams = new List<MovieSearchParam>
                 {
@@ -62,31 +62,19 @@ namespace NzbDrone.Core.Indexers.PassThePopcorn
             };
 
             caps.Categories.AddCategoryMapping(1, NewznabStandardCategory.Movies, "Feature Film");
-            caps.Categories.AddCategoryMapping(1, NewznabStandardCategory.MoviesForeign);
-            caps.Categories.AddCategoryMapping(1, NewznabStandardCategory.MoviesOther);
-            caps.Categories.AddCategoryMapping(1, NewznabStandardCategory.MoviesSD);
-            caps.Categories.AddCategoryMapping(1, NewznabStandardCategory.MoviesHD);
-            caps.Categories.AddCategoryMapping(1, NewznabStandardCategory.Movies3D);
-            caps.Categories.AddCategoryMapping(1, NewznabStandardCategory.MoviesBluRay);
-            caps.Categories.AddCategoryMapping(1, NewznabStandardCategory.MoviesDVD);
-            caps.Categories.AddCategoryMapping(1, NewznabStandardCategory.MoviesWEBDL);
             caps.Categories.AddCategoryMapping(2, NewznabStandardCategory.Movies, "Short Film");
             caps.Categories.AddCategoryMapping(3, NewznabStandardCategory.TV, "Miniseries");
-            caps.Categories.AddCategoryMapping(4, NewznabStandardCategory.TV, "Stand-up Comedy");
-            caps.Categories.AddCategoryMapping(5, NewznabStandardCategory.TV, "Live Performance");
+            caps.Categories.AddCategoryMapping(4, NewznabStandardCategory.Movies, "Stand-up Comedy");
+            caps.Categories.AddCategoryMapping(5, NewznabStandardCategory.Movies, "Live Performance");
+            caps.Categories.AddCategoryMapping(6, NewznabStandardCategory.Movies, "Movie Collection");
 
             return caps;
-        }
-
-        public override IParseIndexerResponse GetParser()
-        {
-            return new PassThePopcornParser(Settings, Capabilities, _logger);
         }
     }
 
     public class PassThePopcornFlag : IndexerFlag
     {
-        public static IndexerFlag Golden => new IndexerFlag("golden", "Release follows Golden Popcorn quality rules");
-        public static IndexerFlag Approved => new IndexerFlag("approved", "Release approved by PTP");
+        public static IndexerFlag Golden => new ("golden", "Release follows Golden Popcorn quality rules");
+        public static IndexerFlag Approved => new ("approved", "Release approved by PTP staff");
     }
 }

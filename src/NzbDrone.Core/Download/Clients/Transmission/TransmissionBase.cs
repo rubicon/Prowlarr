@@ -4,8 +4,8 @@ using FluentValidation.Results;
 using NLog;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.Extensions;
-using NzbDrone.Common.Http;
 using NzbDrone.Core.Configuration;
+using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Validation;
 
@@ -17,60 +17,23 @@ namespace NzbDrone.Core.Download.Clients.Transmission
 
         public TransmissionBase(ITransmissionProxy proxy,
             ITorrentFileInfoReader torrentFileInfoReader,
-            IHttpClient httpClient,
+            ISeedConfigProvider seedConfigProvider,
             IConfigService configService,
             IDiskProvider diskProvider,
             Logger logger)
-            : base(torrentFileInfoReader, httpClient, configService, diskProvider, logger)
+            : base(torrentFileInfoReader, seedConfigProvider, configService, diskProvider, logger)
         {
             _proxy = proxy;
         }
 
-        protected bool HasReachedSeedLimit(TransmissionTorrent torrent, double? ratio, Lazy<TransmissionConfig> config)
+        protected override string AddFromMagnetLink(TorrentInfo release, string hash, string magnetLink)
         {
-            var isStopped = torrent.Status == TransmissionTorrentStatus.Stopped;
-            var isSeeding = torrent.Status == TransmissionTorrentStatus.Seeding;
+            var category = GetCategoryForRelease(release) ?? Settings.Category;
+            var downloadDirectory = GetDownloadDirectory(category);
 
-            if (torrent.SeedRatioMode == 1)
-            {
-                if (isStopped && ratio.HasValue && ratio >= torrent.SeedRatioLimit)
-                {
-                    return true;
-                }
-            }
-            else if (torrent.SeedRatioMode == 0)
-            {
-                if (isStopped && config.Value.SeedRatioLimited && ratio >= config.Value.SeedRatioLimit)
-                {
-                    return true;
-                }
-            }
+            _proxy.AddTorrentFromUrl(magnetLink, downloadDirectory, Settings);
+            _proxy.SetTorrentSeedingConfiguration(hash, release.SeedConfiguration, Settings);
 
-            // Transmission doesn't support SeedTimeLimit, use/abuse seed idle limit, but only if it was set per-torrent.
-            if (torrent.SeedIdleMode == 1)
-            {
-                if ((isStopped || isSeeding) && torrent.SecondsSeeding > torrent.SeedIdleLimit * 60)
-                {
-                    return true;
-                }
-            }
-            else if (torrent.SeedIdleMode == 0)
-            {
-                // The global idle limit is a real idle limit, if it's configured then 'Stopped' is enough.
-                if (isStopped && config.Value.IdleSeedingLimitEnabled)
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        protected override string AddFromMagnetLink(ReleaseInfo release, string hash, string magnetLink)
-        {
-            _proxy.AddTorrentFromUrl(magnetLink, GetDownloadDirectory(), Settings);
-
-            //_proxy.SetTorrentSeedingConfiguration(hash, release.SeedConfiguration, Settings);
             if (Settings.Priority == (int)TransmissionPriority.First)
             {
                 _proxy.MoveTorrentToTopInQueue(hash, Settings);
@@ -79,11 +42,14 @@ namespace NzbDrone.Core.Download.Clients.Transmission
             return hash;
         }
 
-        protected override string AddFromTorrentFile(ReleaseInfo release, string hash, string filename, byte[] fileContent)
+        protected override string AddFromTorrentFile(TorrentInfo release, string hash, string filename, byte[] fileContent)
         {
-            _proxy.AddTorrentFromData(fileContent, GetDownloadDirectory(), Settings);
+            var category = GetCategoryForRelease(release) ?? Settings.Category;
+            var downloadDirectory = GetDownloadDirectory(category);
 
-            //_proxy.SetTorrentSeedingConfiguration(hash, release.SeedConfiguration, Settings);
+            _proxy.AddTorrentFromData(fileContent, downloadDirectory, Settings);
+            _proxy.SetTorrentSeedingConfiguration(hash, release.SeedConfiguration, Settings);
+
             if (Settings.Priority == (int)TransmissionPriority.First)
             {
                 _proxy.MoveTorrentToTopInQueue(hash, Settings);
@@ -92,7 +58,7 @@ namespace NzbDrone.Core.Download.Clients.Transmission
             return hash;
         }
 
-        protected override string AddFromTorrentLink(ReleaseInfo release, string hash, string torrentLink)
+        protected override string AddFromTorrentLink(TorrentInfo release, string hash, string torrentLink)
         {
             throw new NotImplementedException();
         }
@@ -113,14 +79,14 @@ namespace NzbDrone.Core.Download.Clients.Transmission
             return outputPath + torrent.Name.Replace(":", "_");
         }
 
-        protected string GetDownloadDirectory()
+        protected string GetDownloadDirectory(string category)
         {
             if (Settings.Directory.IsNotNullOrWhiteSpace())
             {
                 return Settings.Directory;
             }
 
-            if (!Settings.Category.IsNotNullOrWhiteSpace())
+            if (category.IsNullOrWhiteSpace())
             {
                 return null;
             }
@@ -128,7 +94,7 @@ namespace NzbDrone.Core.Download.Clients.Transmission
             var config = _proxy.GetConfig(Settings);
             var destDir = config.DownloadDir;
 
-            return $"{destDir.TrimEnd('/')}/{Settings.Category}";
+            return $"{destDir.TrimEnd('/')}/{category}";
         }
 
         protected ValidationFailure TestConnection()

@@ -2,15 +2,17 @@ import Chart from 'chart.js/auto';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { kinds } from 'Helpers/Props';
-import colors from 'Styles/Variables/colors';
+import { defaultFontFamily } from 'Styles/Variables/fonts';
 
 function getColors(kind) {
 
+  const style = getComputedStyle(document.body);
+
   if (kind === kinds.WARNING) {
-    return colors.failedColors.reverse();
+    return style.getPropertyValue('--failedColors').split(',');
   }
 
-  return colors.chartColors;
+  return style.getPropertyValue('--chartColors').split(',');
 }
 
 class BarChart extends Component {
@@ -38,7 +40,15 @@ class BarChart extends Component {
         plugins: {
           title: {
             display: true,
-            text: this.props.title
+            align: 'start',
+            text: this.props.title,
+            padding: {
+              bottom: 30
+            },
+            font: {
+              size: 14,
+              family: defaultFontFamily
+            }
           },
           legend: {
             display: this.props.legend

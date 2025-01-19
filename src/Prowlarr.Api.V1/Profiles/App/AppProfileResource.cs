@@ -9,8 +9,9 @@ namespace Prowlarr.Api.V1.Profiles.App
     {
         public string Name { get; set; }
         public bool EnableRss { get; set; }
-        public bool EnableInteractiveSearch { get; set; }
         public bool EnableAutomaticSearch { get; set; }
+        public bool EnableInteractiveSearch { get; set; }
+        public int MinimumSeeders { get; set; }
     }
 
     public static class ProfileResourceMapper
@@ -27,8 +28,9 @@ namespace Prowlarr.Api.V1.Profiles.App
                 Id = model.Id,
                 Name = model.Name,
                 EnableRss = model.EnableRss,
+                EnableAutomaticSearch = model.EnableAutomaticSearch,
                 EnableInteractiveSearch = model.EnableInteractiveSearch,
-                EnableAutomaticSearch = model.EnableAutomaticSearch
+                MinimumSeeders = model.MinimumSeeders
             };
         }
 
@@ -44,8 +46,9 @@ namespace Prowlarr.Api.V1.Profiles.App
                 Id = resource.Id,
                 Name = resource.Name,
                 EnableRss = resource.EnableRss,
+                EnableAutomaticSearch = resource.EnableAutomaticSearch,
                 EnableInteractiveSearch = resource.EnableInteractiveSearch,
-                EnableAutomaticSearch = resource.EnableAutomaticSearch
+                MinimumSeeders = resource.MinimumSeeders
             };
         }
 

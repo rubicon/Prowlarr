@@ -10,12 +10,13 @@ namespace NzbDrone.Core.Indexers.Headphones
         {
             RuleFor(c => c.Username).NotEmpty();
             RuleFor(c => c.Password).NotEmpty();
+            RuleFor(x => x.BaseSettings).SetValidator(new IndexerCommonSettingsValidator());
         }
     }
 
     public class HeadphonesSettings : IIndexerSettings
     {
-        private static readonly HeadphonesSettingsValidator Validator = new HeadphonesSettingsValidator();
+        private static readonly HeadphonesSettingsValidator Validator = new ();
 
         public HeadphonesSettings()
         {
@@ -37,7 +38,7 @@ namespace NzbDrone.Core.Indexers.Headphones
         public string Password { get; set; }
 
         [FieldDefinition(4)]
-        public IndexerBaseSettings BaseSettings { get; set; } = new IndexerBaseSettings();
+        public IndexerBaseSettings BaseSettings { get; set; } = new ();
 
         public virtual NzbDroneValidationResult Validate()
         {

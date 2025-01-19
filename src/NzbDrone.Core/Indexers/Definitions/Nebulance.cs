@@ -1,34 +1,37 @@
 using System;
 using System.Collections.Generic;
-using System.Collections.Specialized;
 using System.Globalization;
+using System.Linq;
+using System.Net;
 using System.Text;
-using System.Text.RegularExpressions;
+using System.Text.Json.Serialization;
 using System.Threading.Tasks;
-using AngleSharp.Html.Parser;
-using FluentValidation;
+using Newtonsoft.Json;
 using NLog;
+using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
+using NzbDrone.Common.Serializer;
 using NzbDrone.Core.Annotations;
 using NzbDrone.Core.Configuration;
+using NzbDrone.Core.Indexers.Exceptions;
+using NzbDrone.Core.Indexers.Settings;
 using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
-using NzbDrone.Core.Validation;
 
 namespace NzbDrone.Core.Indexers.Definitions
 {
     public class Nebulance : TorrentIndexerBase<NebulanceSettings>
     {
         public override string Name => "Nebulance";
-        public override string[] IndexerUrls => new string[] { "https://nebulance.io/" };
-        private string LoginUrl => Settings.BaseUrl + "login.php";
+        public override string[] IndexerUrls => new[] { "https://nebulance.io/" };
         public override string Description => "Nebulance (NBL) is a ratioless Private Torrent Tracker for TV";
         public override string Language => "en-US";
         public override Encoding Encoding => Encoding.UTF8;
-        public override DownloadProtocol Protocol => DownloadProtocol.Torrent;
         public override IndexerPrivacy Privacy => IndexerPrivacy.Private;
+        public override bool SupportsRedirect => true;
+        public override bool SupportsPagination => true;
         public override IndexerCapabilities Capabilities => SetCapabilities();
 
         public Nebulance(IIndexerHttpClient httpClient, IEventAggregator eventAggregator, IIndexerStatusService indexerStatusService, IConfigService configService, Logger logger)
@@ -38,52 +41,30 @@ namespace NzbDrone.Core.Indexers.Definitions
 
         public override IIndexerRequestGenerator GetRequestGenerator()
         {
-            return new NebulanceRequestGenerator() { Settings = Settings, Capabilities = Capabilities };
+            return new NebulanceRequestGenerator(Settings, _logger);
         }
 
         public override IParseIndexerResponse GetParser()
         {
-            return new NebulanceParser(Settings, Capabilities.Categories);
-        }
-
-        protected override async Task DoLogin()
-        {
-            var requestBuilder = new HttpRequestBuilder(LoginUrl)
-            {
-                LogResponseContent = true
-            };
-
-            requestBuilder.Method = HttpMethod.POST;
-            requestBuilder.PostProcess += r => r.RequestTimeout = TimeSpan.FromSeconds(15);
-
-            var cookies = Cookies;
-
-            Cookies = null;
-            var authLoginRequest = requestBuilder
-                .AddFormParameter("username", Settings.Username)
-                .AddFormParameter("password", Settings.Password)
-                .AddFormParameter("twofa", Settings.TwoFactorAuth)
-                .AddFormParameter("keeplogged", "on")
-                .AddFormParameter("login", "Login")
-                .SetHeader("Content-Type", "multipart/form-data")
-                .Build();
-
-            var response = await ExecuteAuth(authLoginRequest);
-
-            cookies = response.GetCookies();
-            UpdateCookies(cookies, DateTime.Now + TimeSpan.FromDays(30));
-
-            _logger.Debug("Nebulance authentication succeeded.");
+            return new NebulanceParser(Settings);
         }
 
         protected override bool CheckIfLoginNeeded(HttpResponse httpResponse)
         {
-            if (!httpResponse.Content.Contains("logout.php"))
-            {
-                return true;
-            }
-
             return false;
+        }
+
+        protected override Task<HttpRequest> GetDownloadRequest(Uri link)
+        {
+            // Avoid using cookies to prevent redirects to login page
+            var requestBuilder = new HttpRequestBuilder(link.AbsoluteUri)
+            {
+                AllowAutoRedirect = FollowRedirect
+            };
+
+            var request = requestBuilder.Build();
+
+            return Task.FromResult(request);
         }
 
         private IndexerCapabilities SetCapabilities()
@@ -91,14 +72,16 @@ namespace NzbDrone.Core.Indexers.Definitions
             var caps = new IndexerCapabilities
             {
                 TvSearchParams = new List<TvSearchParam>
-                                   {
-                                       TvSearchParam.Q, TvSearchParam.Season, TvSearchParam.Ep
-                                   }
+                {
+                    TvSearchParam.Q, TvSearchParam.Season, TvSearchParam.Ep, TvSearchParam.ImdbId, TvSearchParam.TvMazeId
+                },
+                SupportsRawSearch = true
             };
 
             caps.Categories.AddCategoryMapping(1, NewznabStandardCategory.TV);
             caps.Categories.AddCategoryMapping(2, NewznabStandardCategory.TVSD);
             caps.Categories.AddCategoryMapping(3, NewznabStandardCategory.TVHD);
+            caps.Categories.AddCategoryMapping(4, NewznabStandardCategory.TVUHD);
 
             return caps;
         }
@@ -106,76 +89,140 @@ namespace NzbDrone.Core.Indexers.Definitions
 
     public class NebulanceRequestGenerator : IIndexerRequestGenerator
     {
-        public NebulanceSettings Settings { get; set; }
-        public IndexerCapabilities Capabilities { get; set; }
+        private readonly NebulanceSettings _settings;
+        private readonly Logger _logger;
 
-        public NebulanceRequestGenerator()
+        public NebulanceRequestGenerator(NebulanceSettings settings, Logger logger)
         {
-        }
-
-        private IEnumerable<IndexerRequest> GetPagedRequests(string term, int[] categories)
-        {
-            var searchUrl = string.Format("{0}/torrents.php", Settings.BaseUrl.TrimEnd('/'));
-
-            var searchTerm = term;
-
-            if (!string.IsNullOrWhiteSpace(searchTerm))
-            {
-                searchTerm = Regex.Replace(searchTerm, @"[-._]", " ");
-            }
-
-            var qc = new NameValueCollection
-            {
-                { "action", "basic" },
-                { "order_by", "time" },
-                { "order_way", "desc" },
-                { "searchtext", searchTerm }
-            };
-
-            searchUrl = searchUrl + "?" + qc.GetQueryString();
-
-            var request = new IndexerRequest(searchUrl, HttpAccept.Html);
-
-            yield return request;
+            _settings = settings;
+            _logger = logger;
         }
 
         public IndexerPageableRequestChain GetSearchRequests(MovieSearchCriteria searchCriteria)
         {
-            var pageableRequests = new IndexerPageableRequestChain();
-
-            return pageableRequests;
+            return new IndexerPageableRequestChain();
         }
 
         public IndexerPageableRequestChain GetSearchRequests(MusicSearchCriteria searchCriteria)
         {
-            var pageableRequests = new IndexerPageableRequestChain();
-
-            return pageableRequests;
+            return new IndexerPageableRequestChain();
         }
 
         public IndexerPageableRequestChain GetSearchRequests(TvSearchCriteria searchCriteria)
         {
             var pageableRequests = new IndexerPageableRequestChain();
 
-            pageableRequests.Add(GetPagedRequests(string.Format("{0}", searchCriteria.SanitizedTvSearchString), searchCriteria.Categories));
+            var queryParams = new NebulanceQuery
+            {
+                Age = ">0"
+            };
+
+            if (searchCriteria.TvMazeId is > 0)
+            {
+                queryParams.TvMaze = searchCriteria.TvMazeId.Value;
+            }
+            else if (searchCriteria.ImdbId.IsNotNullOrWhiteSpace())
+            {
+                queryParams.Imdb = searchCriteria.FullImdbId;
+            }
+
+            var searchQuery = searchCriteria.SanitizedSearchTerm.Trim();
+
+            if (searchQuery.IsNotNullOrWhiteSpace())
+            {
+                queryParams.Release = searchQuery;
+            }
+
+            if (searchCriteria.Season.HasValue &&
+                searchCriteria.Episode.IsNotNullOrWhiteSpace() &&
+                DateTime.TryParseExact($"{searchCriteria.Season} {searchCriteria.Episode}", "yyyy MM/dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var showDate))
+            {
+                if (searchQuery.IsNotNullOrWhiteSpace())
+                {
+                    queryParams.Name = searchQuery;
+                }
+
+                queryParams.Release = showDate.ToString("yyyy.MM.dd", CultureInfo.InvariantCulture);
+            }
+            else
+            {
+                if (searchCriteria.Season.HasValue)
+                {
+                    queryParams.Season = searchCriteria.Season.Value;
+                }
+
+                if (searchCriteria.Episode.IsNotNullOrWhiteSpace() && int.TryParse(searchCriteria.Episode, out var episodeNumber))
+                {
+                    queryParams.Episode = episodeNumber;
+                }
+            }
+
+            if ((queryParams.Season.HasValue || queryParams.Episode.HasValue) &&
+                queryParams.Name.IsNullOrWhiteSpace() &&
+                queryParams.Release.IsNullOrWhiteSpace() &&
+                !queryParams.TvMaze.HasValue &&
+                queryParams.Imdb.IsNullOrWhiteSpace())
+            {
+                _logger.Debug("NBL API does not support season calls without name, series, id, imdb, tvmaze, or time keys.");
+
+                return new IndexerPageableRequestChain();
+            }
+
+            if (queryParams.Name is { Length: > 0 and < 3 } || queryParams.Release is { Length: > 0 and < 3 })
+            {
+                _logger.Debug("NBL API does not support release calls that are 2 characters or fewer.");
+
+                return new IndexerPageableRequestChain();
+            }
+
+            pageableRequests.Add(GetPagedRequests(queryParams, searchCriteria.Limit, searchCriteria.Offset));
 
             return pageableRequests;
         }
 
         public IndexerPageableRequestChain GetSearchRequests(BookSearchCriteria searchCriteria)
         {
-            var pageableRequests = new IndexerPageableRequestChain();
-
-            return pageableRequests;
+            return new IndexerPageableRequestChain();
         }
 
         public IndexerPageableRequestChain GetSearchRequests(BasicSearchCriteria searchCriteria)
         {
             var pageableRequests = new IndexerPageableRequestChain();
 
-            pageableRequests.Add(GetPagedRequests(string.Format("{0}", searchCriteria.SanitizedSearchTerm), searchCriteria.Categories));
+            var queryParams = new NebulanceQuery
+            {
+                Age = ">0"
+            };
+
+            var searchQuery = searchCriteria.SanitizedSearchTerm.Trim();
+
+            if (searchQuery.IsNotNullOrWhiteSpace())
+            {
+                queryParams.Release = searchQuery;
+            }
+
+            if (queryParams.Release is { Length: > 0 and < 3 })
+            {
+                _logger.Debug("NBL API does not support release calls that are 2 characters or fewer.");
+
+                return new IndexerPageableRequestChain();
+            }
+
+            pageableRequests.Add(GetPagedRequests(queryParams, searchCriteria.Limit, searchCriteria.Offset));
 
             return pageableRequests;
+        }
+
+        private IEnumerable<IndexerRequest> GetPagedRequests(NebulanceQuery parameters, int? results, int? offset)
+        {
+            var apiUrl = _settings.BaseUrl + "api.php";
+
+            var builder = new JsonRpcRequestBuilder(apiUrl)
+                .Call("getTorrents", _settings.ApiKey, parameters, results ?? 100, offset ?? 0);
+
+            builder.SuppressHttpError = true;
+
+            yield return new IndexerRequest(builder.Build());
         }
 
         public Func<IDictionary<string, string>> GetCookies { get; set; }
@@ -185,77 +232,84 @@ namespace NzbDrone.Core.Indexers.Definitions
     public class NebulanceParser : IParseIndexerResponse
     {
         private readonly NebulanceSettings _settings;
-        private readonly IndexerCapabilitiesCategories _categories;
 
-        public NebulanceParser(NebulanceSettings settings, IndexerCapabilitiesCategories categories)
+        public NebulanceParser(NebulanceSettings settings)
         {
             _settings = settings;
-            _categories = categories;
         }
 
         public IList<ReleaseInfo> ParseResponse(IndexerResponse indexerResponse)
         {
+            if (indexerResponse.HttpResponse.StatusCode != HttpStatusCode.OK)
+            {
+                STJson.TryDeserialize<JsonRpcResponse<NebulanceErrorResponse>>(indexerResponse.HttpResponse.Content, out var errorResponse);
+
+                throw new IndexerException(indexerResponse, "Unexpected response status '{0}' code from indexer request: {1}", indexerResponse.HttpResponse.StatusCode, errorResponse?.Result?.Error?.Message ?? "Check the logs for more information.");
+            }
+
+            if (!indexerResponse.HttpResponse.Headers.ContentType.Contains(HttpAccept.Json.Value))
+            {
+                throw new IndexerException(indexerResponse, "Unexpected response header {0} from indexer request, expected {1}", indexerResponse.HttpResponse.Headers.ContentType, HttpAccept.Json.Value);
+            }
+
             var torrentInfos = new List<ReleaseInfo>();
 
-            var parser = new HtmlParser();
-            var document = parser.ParseDocument(indexerResponse.Content);
-            var rows = document.QuerySelectorAll(".torrent_table > tbody > tr[class^='torrent row']");
+            JsonRpcResponse<NebulanceResponse> jsonResponse;
+
+            try
+            {
+                jsonResponse = STJson.Deserialize<JsonRpcResponse<NebulanceResponse>>(indexerResponse.HttpResponse.Content);
+            }
+            catch (Exception ex)
+            {
+                STJson.TryDeserialize<JsonRpcResponse<string>>(indexerResponse.HttpResponse.Content, out var response);
+
+                throw new IndexerException(indexerResponse, "Unexpected response from indexer request: {0}", ex, response?.Result ?? ex.Message);
+            }
+
+            if (jsonResponse.Error != null || jsonResponse.Result == null)
+            {
+                throw new IndexerException(indexerResponse, "Indexer API call returned an error [{0}]", jsonResponse.Error);
+            }
+
+            if (jsonResponse.Result?.Items == null || jsonResponse.Result.Items.Count == 0)
+            {
+                return torrentInfos;
+            }
+
+            var rows = jsonResponse.Result.Items;
 
             foreach (var row in rows)
             {
-                var title = row.QuerySelector("a[data-src]").GetAttribute("data-src");
-                if (string.IsNullOrEmpty(title) || title == "0")
-                {
-                    title = row.QuerySelector("a[data-src]").TextContent;
-                    title = Regex.Replace(title, @"[\[\]\/]", "");
-                }
-                else
-                {
-                    if (title.Length > 5 && title.Substring(title.Length - 5).Contains("."))
-                    {
-                        title = title.Remove(title.LastIndexOf(".", StringComparison.Ordinal));
-                    }
-                }
+                var details = _settings.BaseUrl + "torrents.php?id=" + row.TorrentId;
 
-                var posterStr = row.QuerySelector("img")?.GetAttribute("src");
-                Uri.TryCreate(posterStr, UriKind.Absolute, out var poster);
-
-                var details = _settings.BaseUrl + row.QuerySelector("a[data-src]").GetAttribute("href");
-                var link = _settings.BaseUrl + row.QuerySelector("a[href*='action=download']").GetAttribute("href");
-
-                var qColSize = row.QuerySelector("td:nth-child(3)");
-                var size = ParseUtil.GetBytes(qColSize.Children[0].TextContent);
-                var files = ParseUtil.CoerceInt(qColSize.Children[1].TextContent.Split(':')[1].Trim());
-
-                var qPublishdate = row.QuerySelector("td:nth-child(4) span");
-                var publishDateStr = qPublishdate.GetAttribute("title");
-                var publishDate = !string.IsNullOrEmpty(publishDateStr) && publishDateStr.Contains(",")
-                    ? DateTime.ParseExact(publishDateStr, "MMM dd yyyy, HH:mm", CultureInfo.InvariantCulture)
-                    : DateTime.ParseExact(qPublishdate.TextContent.Trim(), "MMM dd yyyy, HH:mm", CultureInfo.InvariantCulture);
-
-                var grabs = ParseUtil.CoerceInt(row.QuerySelector("td:nth-child(5)").TextContent);
-                var seeds = ParseUtil.CoerceInt(row.QuerySelector("td:nth-child(6)").TextContent);
-                var leechers = ParseUtil.CoerceInt(row.QuerySelector("td:nth-child(7)").TextContent);
+                var title = row.ReleaseTitle.IsNotNullOrWhiteSpace() ? row.ReleaseTitle : row.GroupName;
 
                 var release = new TorrentInfo
                 {
-                    Title = title,
                     Guid = details,
                     InfoUrl = details,
-                    PosterUrl = poster?.AbsoluteUri ?? null,
-                    DownloadUrl = link,
-                    Categories = new List<IndexerCategory> { TvCategoryFromQualityParser.ParseTvShowQuality(title) },
-                    Size = size,
-                    Files = files,
-                    PublishDate = publishDate,
-                    Grabs = grabs,
-                    Seeders = seeds,
-                    Peers = seeds + leechers,
+                    DownloadUrl = row.Download,
+                    Title = title.Trim(),
+                    Categories = new List<IndexerCategory> { TvCategoryFromQualityParser.ParseTvShowQuality(row.ReleaseTitle) },
+                    Size = ParseUtil.CoerceLong(row.Size),
+                    Files = row.FileList.Count(),
+                    PublishDate = DateTime.Parse(row.PublishDateUtc, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal),
+                    Grabs = ParseUtil.CoerceInt(row.Snatch),
+                    Seeders = ParseUtil.CoerceInt(row.Seed),
+                    Peers = ParseUtil.CoerceInt(row.Seed) + ParseUtil.CoerceInt(row.Leech),
+                    Scene = row.Tags?.ContainsIgnoreCase("scene"),
                     MinimumRatio = 0, // ratioless
-                    MinimumSeedTime = 86400, // 24 hours
+                    MinimumSeedTime = row.Category.ToLower() == "season" ? 432000 : 86400, // 120 hours for seasons and 24 hours for episodes
                     DownloadVolumeFactor = 0, // ratioless tracker
-                    UploadVolumeFactor = 1
+                    UploadVolumeFactor = 1,
+                    PosterUrl = row.Banner
                 };
+
+                if (row.TvMazeId.IsNotNullOrWhiteSpace())
+                {
+                    release.TvMazeId = ParseUtil.CoerceInt(row.TvMazeId);
+                }
 
                 torrentInfos.Add(release);
             }
@@ -266,44 +320,111 @@ namespace NzbDrone.Core.Indexers.Definitions
         public Action<IDictionary<string, string>, DateTime?> CookiesUpdater { get; set; }
     }
 
-    public class NebulanceSettingsValidator : AbstractValidator<NebulanceSettings>
+    public class NebulanceSettings : NoAuthTorrentBaseSettings
     {
-        public NebulanceSettingsValidator()
+        public NebulanceSettings()
         {
-            RuleFor(c => c.Username).NotEmpty();
-            RuleFor(c => c.Password).NotEmpty();
+            ApiKey = "";
+        }
+
+        [FieldDefinition(2, Label = "ApiKey", HelpText = "IndexerNebulanceSettingsApiKeyHelpText", Privacy = PrivacyLevel.ApiKey)]
+        public string ApiKey { get; set; }
+    }
+
+    public class NebulanceQuery
+    {
+        [JsonProperty(DefaultValueHandling = DefaultValueHandling.Ignore)]
+        public string Id { get; set; }
+
+        [JsonProperty(DefaultValueHandling = DefaultValueHandling.Ignore)]
+        public string Time { get; set; }
+
+        [JsonProperty(PropertyName="age", DefaultValueHandling = DefaultValueHandling.Ignore)]
+        public string Age { get; set; }
+
+        [JsonProperty(PropertyName="tvmaze", DefaultValueHandling = DefaultValueHandling.Ignore)]
+        public int? TvMaze { get; set; }
+
+        [JsonProperty(PropertyName="imdb", DefaultValueHandling = DefaultValueHandling.Ignore)]
+        public string Imdb { get; set; }
+
+        [JsonProperty(DefaultValueHandling = DefaultValueHandling.Ignore)]
+        public string Hash { get; set; }
+
+        [JsonProperty(DefaultValueHandling = DefaultValueHandling.Ignore)]
+        public string[] Tags { get; set; }
+
+        [JsonProperty(PropertyName="name", DefaultValueHandling = DefaultValueHandling.Ignore)]
+        public string Name { get; set; }
+
+        [JsonProperty(PropertyName="release", DefaultValueHandling = DefaultValueHandling.Ignore)]
+        public string Release { get; set; }
+
+        [JsonProperty(DefaultValueHandling = DefaultValueHandling.Ignore)]
+        public string Category { get; set; }
+
+        [JsonProperty(DefaultValueHandling = DefaultValueHandling.Ignore)]
+        public string Series { get; set; }
+
+        [JsonProperty(PropertyName="season", DefaultValueHandling = DefaultValueHandling.Ignore)]
+        public int? Season { get; set; }
+
+        [JsonProperty(PropertyName="episode", DefaultValueHandling = DefaultValueHandling.Ignore)]
+        public int? Episode { get; set; }
+
+        public NebulanceQuery Clone()
+        {
+            return MemberwiseClone() as NebulanceQuery;
         }
     }
 
-    public class NebulanceSettings : IIndexerSettings
+    public class NebulanceResponse
     {
-        private static readonly NebulanceSettingsValidator Validator = new NebulanceSettingsValidator();
+        public List<NebulanceTorrent> Items { get; set; }
+    }
 
-        public NebulanceSettings()
-        {
-            Username = "";
-            Password = "";
-            TwoFactorAuth = "";
-        }
+    public class NebulanceTorrent
+    {
+        [JsonPropertyName("rls_name")]
+        public string ReleaseTitle { get; set; }
 
-        [FieldDefinition(1, Label = "Base Url", Type = FieldType.Select, SelectOptionsProviderAction = "getUrls", HelpText = "Select which baseurl Prowlarr will use for requests to the site")]
-        public string BaseUrl { get; set; }
+        [JsonPropertyName("cat")]
+        public string Category { get; set; }
 
-        [FieldDefinition(2, Label = "Username", HelpText = "Site Username", Privacy = PrivacyLevel.UserName)]
-        public string Username { get; set; }
+        public string Size { get; set; }
+        public string Seed { get; set; }
+        public string Leech { get; set; }
+        public string Snatch { get; set; }
+        public string Download { get; set; }
 
-        [FieldDefinition(3, Label = "Password", HelpText = "Site Password", Privacy = PrivacyLevel.Password, Type = FieldType.Password)]
-        public string Password { get; set; }
+        [JsonPropertyName("file_list")]
+        public IEnumerable<string> FileList { get; set; } = Array.Empty<string>();
 
-        [FieldDefinition(4, Label = "Two Factor Auth", HelpText = "Two-Factor Auth")]
-        public string TwoFactorAuth { get; set; }
+        [JsonPropertyName("group_name")]
+        public string GroupName { get; set; }
 
-        [FieldDefinition(5)]
-        public IndexerBaseSettings BaseSettings { get; set; } = new IndexerBaseSettings();
+        [JsonPropertyName("series_banner")]
+        public string Banner { get; set; }
 
-        public NzbDroneValidationResult Validate()
-        {
-            return new NzbDroneValidationResult(Validator.Validate(this));
-        }
+        [JsonPropertyName("group_id")]
+        public string TorrentId { get; set; }
+
+        [JsonPropertyName("series_id")]
+        public string TvMazeId { get; set; }
+
+        [JsonPropertyName("rls_utc")]
+        public string PublishDateUtc { get; set; }
+
+        public IEnumerable<string> Tags { get; set; } = Array.Empty<string>();
+    }
+
+    public class NebulanceErrorResponse
+    {
+        public NebulanceErrorMessage Error { get; set; }
+    }
+
+    public class NebulanceErrorMessage
+    {
+        public string Message { get; set; }
     }
 }

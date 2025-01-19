@@ -14,16 +14,17 @@ import QueryParameterOption from './QueryParameterOption';
 import styles from './QueryParameterModal.css';
 
 const searchOptions = [
-  { key: 'search', value: 'Basic Search' },
-  { key: 'tvsearch', value: 'TV Search' },
-  { key: 'movie', value: 'Movie Search' },
-  { key: 'music', value: 'Audio Search' },
-  { key: 'book', value: 'Book Search' }
+  { key: 'search', value: () => translate('BasicSearch') },
+  { key: 'tvsearch', value: () => translate('TvSearch') },
+  { key: 'movie', value: () => translate('MovieSearch') },
+  { key: 'music', value: () => translate( 'AudioSearch') },
+  { key: 'book', value: () => translate('BookSearch') }
 ];
 
 const seriesTokens = [
   { token: '{ImdbId:tt1234567}', example: 'tt12345' },
   { token: '{TvdbId:12345}', example: '12345' },
+  { token: '{TmdbId:12345}', example: '12345' },
   { token: '{TvMazeId:12345}', example: '54321' },
   { token: '{Season:00}', example: '01' },
   { token: '{Episode:00}', example: '01' }
@@ -93,8 +94,8 @@ class QueryParameterModal extends Component {
       const newValue = `${start}${tokenValue}${end}`;
 
       onSearchInputChange({ name, value: newValue });
-      this._selectionStart = newValue.length - 1;
-      this._selectionEnd = newValue.length - 1;
+      this._selectionStart = newValue.length;
+      this._selectionEnd = newValue.length;
     }
   };
 
@@ -248,7 +249,7 @@ class QueryParameterModal extends Component {
               onSelectionChange={this.onInputSelectionChange}
             />
             <Button onPress={onModalClose}>
-              Close
+              {translate('Close')}
             </Button>
           </ModalFooter>
         </ModalContent>

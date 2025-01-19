@@ -1,5 +1,6 @@
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
+import Alert from 'Components/Alert';
 import LoadingIndicator from 'Components/Loading/LoadingIndicator';
 import FilterMenu from 'Components/Menu/FilterMenu';
 import ConfirmModal from 'Components/Modal/ConfirmModal';
@@ -14,6 +15,7 @@ import TableOptionsModalWrapper from 'Components/Table/TableOptions/TableOptions
 import TablePager from 'Components/Table/TablePager';
 import { align, icons, kinds } from 'Helpers/Props';
 import translate from 'Utilities/String/translate';
+import HistoryFilterModal from './HistoryFilterModal';
 import HistoryOptionsConnector from './HistoryOptionsConnector';
 import HistoryRowConnector from './HistoryRowConnector';
 
@@ -62,6 +64,7 @@ class History extends Component {
       columns,
       selectedFilterKey,
       filters,
+      customFilters,
       totalRecords,
       onFilterSelect,
       onFirstPagePress,
@@ -107,7 +110,8 @@ class History extends Component {
               alignMenu={align.RIGHT}
               selectedFilterKey={selectedFilterKey}
               filters={filters}
-              customFilters={[]}
+              customFilters={customFilters}
+              filterModalConnectorComponent={HistoryFilterModal}
               onFilterSelect={onFilterSelect}
             />
           </PageToolbarSection>
@@ -121,9 +125,9 @@ class History extends Component {
 
           {
             !isFetchingAny && hasError &&
-              <div>
+              <Alert kind={kinds.DANGER}>
                 {translate('UnableToLoadHistory')}
-              </div>
+              </Alert>
           }
 
           {
@@ -131,9 +135,9 @@ class History extends Component {
             // wait for the episodes to populate because they are never coming.
 
             isPopulated && !hasError && !items.length &&
-              <div>
-                No history found
-              </div>
+              <Alert kind={kinds.INFO}>
+                {translate('NoHistoryFound')}
+              </Alert>
           }
 
           {
@@ -192,8 +196,9 @@ History.propTypes = {
   indexersError: PropTypes.object,
   items: PropTypes.arrayOf(PropTypes.object).isRequired,
   columns: PropTypes.arrayOf(PropTypes.object).isRequired,
-  selectedFilterKey: PropTypes.string.isRequired,
+  selectedFilterKey: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
   filters: PropTypes.arrayOf(PropTypes.object).isRequired,
+  customFilters: PropTypes.arrayOf(PropTypes.object).isRequired,
   totalRecords: PropTypes.number,
   onFilterSelect: PropTypes.func.isRequired,
   onFirstPagePress: PropTypes.func.isRequired,

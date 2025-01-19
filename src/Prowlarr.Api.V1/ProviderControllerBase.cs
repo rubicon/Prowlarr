@@ -3,29 +3,45 @@ using System.Linq;
 using FluentValidation;
 using FluentValidation.Results;
 using Microsoft.AspNetCore.Mvc;
+using NzbDrone.Common.Extensions;
+using NzbDrone.Core.Datastore.Events;
+using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.ThingiProvider;
+using NzbDrone.Core.ThingiProvider.Events;
 using NzbDrone.Core.Validation;
 using NzbDrone.Http.REST.Attributes;
-using Prowlarr.Http.Extensions;
+using NzbDrone.SignalR;
 using Prowlarr.Http.REST;
 
 namespace Prowlarr.Api.V1
 {
-    public abstract class ProviderControllerBase<TProviderResource, TProvider, TProviderDefinition> : RestController<TProviderResource>
+    public abstract class ProviderControllerBase<TProviderResource, TBulkProviderResource, TProvider, TProviderDefinition> : RestControllerWithSignalR<TProviderResource, TProviderDefinition>,
+        IHandle<ProviderAddedEvent<TProvider>>,
+        IHandle<ProviderUpdatedEvent<TProvider>>,
+        IHandle<ProviderDeletedEvent<TProvider>>
         where TProviderDefinition : ProviderDefinition, new()
+        where TBulkProviderResource : ProviderBulkResource<TBulkProviderResource>, new()
         where TProvider : IProvider
         where TProviderResource : ProviderResource<TProviderResource>, new()
     {
         protected readonly IProviderFactory<TProvider, TProviderDefinition> _providerFactory;
         protected readonly ProviderResourceMapper<TProviderResource, TProviderDefinition> _resourceMapper;
+        private readonly ProviderBulkResourceMapper<TBulkProviderResource, TProviderDefinition> _bulkResourceMapper;
 
-        protected ProviderControllerBase(IProviderFactory<TProvider, TProviderDefinition> providerFactory, string resource, ProviderResourceMapper<TProviderResource, TProviderDefinition> resourceMapper)
+        protected ProviderControllerBase(IBroadcastSignalRMessage signalRBroadcaster,
+            IProviderFactory<TProvider,
+            TProviderDefinition> providerFactory,
+            string resource,
+            ProviderResourceMapper<TProviderResource, TProviderDefinition> resourceMapper,
+            ProviderBulkResourceMapper<TBulkProviderResource, TProviderDefinition> bulkResourceMapper)
+            : base(signalRBroadcaster)
         {
             _providerFactory = providerFactory;
             _resourceMapper = resourceMapper;
+            _bulkResourceMapper = bulkResourceMapper;
 
             SharedValidator.RuleFor(c => c.Name).NotEmpty();
-            SharedValidator.RuleFor(c => c.Name).Must((v, c) => !_providerFactory.All().Any(p => p.Name == c && p.Id != v.Id)).WithMessage("Should be unique");
+            SharedValidator.RuleFor(c => c.Name).Must((v, c) => !_providerFactory.All().Any(p => p.Name.EqualsIgnoreCase(c) && p.Id != v.Id)).WithMessage("Should be unique");
             SharedValidator.RuleFor(c => c.Implementation).NotEmpty();
             SharedValidator.RuleFor(c => c.ConfigContract).NotEmpty();
 
@@ -44,11 +60,11 @@ namespace Prowlarr.Api.V1
         [Produces("application/json")]
         public List<TProviderResource> GetAll()
         {
-            var providerDefinitions = _providerFactory.All().OrderBy(p => p.ImplementationName);
+            var providerDefinitions = _providerFactory.All();
 
-            var result = new List<TProviderResource>(providerDefinitions.Count());
+            var result = new List<TProviderResource>(providerDefinitions.Count);
 
-            foreach (var definition in providerDefinitions)
+            foreach (var definition in providerDefinitions.OrderBy(p => p.ImplementationName))
             {
                 _providerFactory.SetProviderCharacteristics(definition);
 
@@ -59,14 +75,15 @@ namespace Prowlarr.Api.V1
         }
 
         [RestPostById]
+        [Consumes("application/json")]
         [Produces("application/json")]
-        public ActionResult<TProviderResource> CreateProvider(TProviderResource providerResource)
+        public ActionResult<TProviderResource> CreateProvider([FromBody] TProviderResource providerResource, [FromQuery] bool forceSave = false)
         {
-            var providerDefinition = GetDefinition(providerResource, false);
+            var providerDefinition = GetDefinition(providerResource, true, !forceSave, false);
 
             if (providerDefinition.Enable)
             {
-                Test(providerDefinition, false);
+                Test(providerDefinition, !forceSave);
             }
 
             providerDefinition = _providerFactory.Create(providerDefinition);
@@ -75,16 +92,16 @@ namespace Prowlarr.Api.V1
         }
 
         [RestPutById]
+        [Consumes("application/json")]
         [Produces("application/json")]
-        public ActionResult<TProviderResource> UpdateProvider(TProviderResource providerResource)
+        public ActionResult<TProviderResource> UpdateProvider([FromBody] TProviderResource providerResource, [FromQuery] bool forceSave = false)
         {
-            var providerDefinition = GetDefinition(providerResource, false);
-            var forceSave = Request.GetBooleanQueryParameter("forceSave");
+            var providerDefinition = GetDefinition(providerResource, true, !forceSave, false);
 
             // Only test existing definitions if it is enabled and forceSave isn't set.
             if (providerDefinition.Enable && !forceSave)
             {
-                Test(providerDefinition, false);
+                Test(providerDefinition, true);
             }
 
             _providerFactory.Update(providerDefinition);
@@ -92,11 +109,53 @@ namespace Prowlarr.Api.V1
             return Accepted(providerResource.Id);
         }
 
-        private TProviderDefinition GetDefinition(TProviderResource providerResource, bool includeWarnings = false, bool validate = true)
+        [HttpPut("bulk")]
+        [Consumes("application/json")]
+        [Produces("application/json")]
+        public virtual ActionResult<TProviderResource> UpdateProvider([FromBody] TBulkProviderResource providerResource)
         {
-            var definition = _resourceMapper.ToModel(providerResource);
+            if (!providerResource.Ids.Any())
+            {
+                throw new BadRequestException("ids must be provided");
+            }
 
-            if (validate)
+            var definitionsToUpdate = _providerFactory.Get(providerResource.Ids).ToList();
+
+            foreach (var definition in definitionsToUpdate)
+            {
+                _providerFactory.SetProviderCharacteristics(definition);
+
+                if (providerResource.Tags != null)
+                {
+                    var newTags = providerResource.Tags;
+                    var applyTags = providerResource.ApplyTags;
+
+                    switch (applyTags)
+                    {
+                        case ApplyTags.Add:
+                            newTags.ForEach(t => definition.Tags.Add(t));
+                            break;
+                        case ApplyTags.Remove:
+                            newTags.ForEach(t => definition.Tags.Remove(t));
+                            break;
+                        case ApplyTags.Replace:
+                            definition.Tags = new HashSet<int>(newTags);
+                            break;
+                    }
+                }
+            }
+
+            _bulkResourceMapper.UpdateModel(providerResource, definitionsToUpdate);
+
+            return Accepted(_providerFactory.Update(definitionsToUpdate).Select(x => _resourceMapper.ToResource(x)));
+        }
+
+        private TProviderDefinition GetDefinition(TProviderResource providerResource, bool validate, bool includeWarnings, bool forceValidate)
+        {
+            var existingDefinition = providerResource.Id > 0 ? _providerFactory.Find(providerResource.Id) : null;
+            var definition = _resourceMapper.ToModel(providerResource, existingDefinition);
+
+            if (validate && (definition.Enable || forceValidate))
             {
                 Validate(definition, includeWarnings);
             }
@@ -108,6 +167,16 @@ namespace Prowlarr.Api.V1
         public object DeleteProvider(int id)
         {
             _providerFactory.Delete(id);
+
+            return new { };
+        }
+
+        [HttpDelete("bulk")]
+        [Consumes("application/json")]
+        [Produces("application/json")]
+        public virtual object DeleteProviders([FromBody] TBulkProviderResource resource)
+        {
+            _providerFactory.Delete(resource.Ids);
 
             return new { };
         }
@@ -137,9 +206,10 @@ namespace Prowlarr.Api.V1
 
         [SkipValidation(true, false)]
         [HttpPost("test")]
-        public object Test([FromBody] TProviderResource providerResource)
+        [Consumes("application/json")]
+        public object Test([FromBody] TProviderResource providerResource, [FromQuery] bool forceTest = false)
         {
-            var providerDefinition = GetDefinition(providerResource, true);
+            var providerDefinition = GetDefinition(providerResource, true, !forceTest, true);
 
             Test(providerDefinition, true);
 
@@ -170,9 +240,11 @@ namespace Prowlarr.Api.V1
 
         [SkipValidation]
         [HttpPost("action/{name}")]
-        public IActionResult RequestAction(string name, [FromBody] TProviderResource resource)
+        [Consumes("application/json")]
+        [Produces("application/json")]
+        public IActionResult RequestAction([FromRoute] string name, [FromBody] TProviderResource resource)
         {
-            var providerDefinition = GetDefinition(resource, true, false);
+            var providerDefinition = GetDefinition(resource, false, false, false);
 
             var query = Request.Query.ToDictionary(x => x.Key, x => x.Value.ToString());
 
@@ -181,7 +253,25 @@ namespace Prowlarr.Api.V1
             return Json(data);
         }
 
-        protected virtual void Validate(TProviderDefinition definition, bool includeWarnings)
+        [NonAction]
+        public void Handle(ProviderAddedEvent<TProvider> message)
+        {
+            BroadcastResourceChange(ModelAction.Created, message.Definition.Id);
+        }
+
+        [NonAction]
+        public void Handle(ProviderUpdatedEvent<TProvider> message)
+        {
+            BroadcastResourceChange(ModelAction.Updated, message.Definition.Id);
+        }
+
+        [NonAction]
+        public void Handle(ProviderDeletedEvent<TProvider> message)
+        {
+            BroadcastResourceChange(ModelAction.Deleted, message.ProviderId);
+        }
+
+        private void Validate(TProviderDefinition definition, bool includeWarnings)
         {
             var validationResult = definition.Settings.Validate();
 
@@ -197,7 +287,7 @@ namespace Prowlarr.Api.V1
 
         protected void VerifyValidationResult(ValidationResult validationResult, bool includeWarnings)
         {
-            var result = new NzbDroneValidationResult(validationResult.Errors);
+            var result = validationResult as NzbDroneValidationResult ?? new NzbDroneValidationResult(validationResult.Errors);
 
             if (includeWarnings && (!result.IsValid || result.HasWarnings))
             {

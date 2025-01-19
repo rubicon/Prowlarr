@@ -33,22 +33,25 @@ namespace NzbDrone.Core.Instrumentation
 
             LogManager.Configuration.AddTarget("DbLogger", target);
             LogManager.Configuration.LoggingRules.Add(Rule);
-            LogManager.ConfigurationReloaded += OnLogManagerOnConfigurationReloaded;
+            LogManager.ConfigurationChanged += OnLogManagerOnConfigurationChanged;
             LogManager.ReconfigExistingLoggers();
         }
 
         public void UnRegister()
         {
-            LogManager.ConfigurationReloaded -= OnLogManagerOnConfigurationReloaded;
+            LogManager.ConfigurationChanged -= OnLogManagerOnConfigurationChanged;
             LogManager.Configuration.RemoveTarget("DbLogger");
             LogManager.Configuration.LoggingRules.Remove(Rule);
             LogManager.ReconfigExistingLoggers();
             Dispose();
         }
 
-        private void OnLogManagerOnConfigurationReloaded(object sender, LoggingConfigurationReloadedEventArgs args)
+        private void OnLogManagerOnConfigurationChanged(object sender, LoggingConfigurationChangedEventArgs args)
         {
-            Register();
+            if (args.ActivatedConfiguration != null)
+            {
+                Register();
+            }
         }
 
         public LoggingRule Rule { get; set; }
@@ -57,45 +60,52 @@ namespace NzbDrone.Core.Instrumentation
         {
             try
             {
-                var log = new Log();
-                log.Time = logEvent.TimeStamp;
-                log.Message = CleanseLogMessage.Cleanse(logEvent.FormattedMessage);
-
-                log.Logger = logEvent.LoggerName;
+                var log = new Log
+                {
+                    Time = logEvent.TimeStamp,
+                    Logger = logEvent.LoggerName,
+                    Level = logEvent.Level.Name
+                };
 
                 if (log.Logger.StartsWith("NzbDrone."))
                 {
                     log.Logger = log.Logger.Remove(0, 9);
                 }
 
+                var message = logEvent.FormattedMessage;
+
                 if (logEvent.Exception != null)
                 {
-                    if (string.IsNullOrWhiteSpace(log.Message))
+                    if (string.IsNullOrWhiteSpace(message))
                     {
-                        log.Message = logEvent.Exception.Message;
+                        message = logEvent.Exception.Message;
                     }
                     else
                     {
-                        log.Message += ": " + logEvent.Exception.Message;
+                        message += ": " + logEvent.Exception.Message;
                     }
 
-                    log.Exception = logEvent.Exception.ToString();
+                    log.Exception = CleanseLogMessage.Cleanse(logEvent.Exception.ToString());
                     log.ExceptionType = logEvent.Exception.GetType().ToString();
                 }
 
-                log.Level = logEvent.Level.Name;
+                log.Message = CleanseLogMessage.Cleanse(message);
 
-                var connectionString = _connectionStringFactory.LogDbConnectionString;
+                var connectionInfo = _connectionStringFactory.LogDbConnection;
 
-                //TODO: Probably need more robust way to differentiate what's being used
-                if (connectionString.Contains(".db"))
+                if (connectionInfo.DatabaseType == DatabaseType.SQLite)
                 {
-                    WriteSqliteLog(log, connectionString);
+                    WriteSqliteLog(log, connectionInfo.ConnectionString);
                 }
                 else
                 {
-                    WritePostgresLog(log, connectionString);
+                    WritePostgresLog(log, connectionInfo.ConnectionString);
                 }
+            }
+            catch (NpgsqlException ex)
+            {
+                InternalLogger.Error("Unable to save log event to database: {0}", ex);
+                throw;
             }
             catch (SQLiteException ex)
             {

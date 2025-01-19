@@ -5,7 +5,6 @@ using System.Threading.Tasks;
 using FluentValidation.Results;
 using NLog;
 using NzbDrone.Common.Extensions;
-using NzbDrone.Common.Http;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Messaging.Events;
@@ -23,18 +22,16 @@ namespace NzbDrone.Core.Indexers.Newznab
         public override string Description => "Newznab is an API search specification for Usenet";
         public override bool FollowRedirect => true;
         public override bool SupportsRedirect => true;
-
-        public override DownloadProtocol Protocol => DownloadProtocol.Usenet;
+        public override bool SupportsPagination => true;
         public override IndexerPrivacy Privacy => IndexerPrivacy.Private;
-
         public override IndexerCapabilities Capabilities { get => GetCapabilitiesFromSettings(); protected set => base.Capabilities = value; }
-
-        public override int PageSize => _capabilitiesProvider.GetCapabilities(Settings, Definition).LimitsDefault.Value;
+        public override int PageSize => GetProviderPageSize();
 
         public override IIndexerRequestGenerator GetRequestGenerator()
         {
             return new NewznabRequestGenerator(_capabilitiesProvider)
             {
+                Definition = Definition,
                 PageSize = PageSize,
                 Settings = Settings
             };
@@ -42,34 +39,44 @@ namespace NzbDrone.Core.Indexers.Newznab
 
         public override IParseIndexerResponse GetParser()
         {
-            return new NewznabRssParser(Settings);
+            return new NewznabRssParser(Settings, Definition, _capabilitiesProvider);
         }
 
         public string[] GetBaseUrlFromSettings()
         {
-            var baseUrl = "";
-
-            if (Definition == null || Settings == null || Settings.Categories == null)
+            if (Definition == null || Settings?.Capabilities == null)
             {
-                return new string[] { baseUrl };
+                return new[] { "" };
             }
 
-            return new string[] { Settings.BaseUrl };
+            return new[] { Settings.BaseUrl };
+        }
+
+        protected override NewznabSettings GetDefaultBaseUrl(NewznabSettings settings)
+        {
+            return settings;
         }
 
         public IndexerCapabilities GetCapabilitiesFromSettings()
         {
             var caps = new IndexerCapabilities();
 
-            if (Definition == null || Settings == null || Settings.Categories == null)
+            if (Definition == null || Settings?.Capabilities?.Categories == null)
             {
                 return caps;
             }
 
-            foreach (var category in Settings.Categories)
+            foreach (var category in Settings.Capabilities.Categories)
             {
                 caps.Categories.AddCategoryMapping(category.Name, category);
             }
+
+            caps.SupportsRawSearch = Settings?.Capabilities?.SupportsRawSearch ?? false;
+            caps.SearchParams = Settings?.Capabilities?.SearchParams ?? new List<SearchParam> { SearchParam.Q };
+            caps.TvSearchParams = Settings?.Capabilities?.TvSearchParams ?? new List<TvSearchParam>();
+            caps.MovieSearchParams = Settings?.Capabilities?.MovieSearchParams ?? new List<MovieSearchParam>();
+            caps.MusicSearchParams = Settings?.Capabilities?.MusicSearchParams ?? new List<MusicSearchParam>();
+            caps.BookSearchParams = Settings?.Capabilities?.BookSearchParams ?? new List<BookSearchParam>();
 
             return caps;
         }
@@ -84,29 +91,24 @@ namespace NzbDrone.Core.Indexers.Newznab
         {
             get
             {
-                yield return GetDefinition("abNZB", GetSettings("https://abnzb.com"));
-                yield return GetDefinition("altHUB", GetSettings("https://althub.co.za"));
-                yield return GetDefinition("AnimeTosho (Usenet)", GetSettings("https://feed.animetosho.org"));
-                yield return GetDefinition("DOGnzb", GetSettings("https://api.dognzb.cr"));
-                yield return GetDefinition("DrunkenSlug", GetSettings("https://drunkenslug.com"));
+                yield return GetDefinition("abNZB", GetSettings("https://abnzb.com"), categories: new[] { 2000, 3000, 4000, 5000, 6000, 7000, 8000 });
+                yield return GetDefinition("altHUB", GetSettings("https://api.althub.co.za"), categories: new[] { 2000, 3000, 4000, 5000, 7000 });
+                yield return GetDefinition("AnimeTosho (Usenet)", GetSettings("https://feed.animetosho.org"), categories: new[] { 2020, 5070 });
+                yield return GetDefinition("DOGnzb", GetSettings("https://api.dognzb.cr"), categories: new[] { 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000 });
+                yield return GetDefinition("DrunkenSlug", GetSettings("https://drunkenslug.com"), categories: new[] { 1000, 2000, 3000, 4000, 5000, 6000, 7000 });
                 yield return GetDefinition("GingaDADDY", GetSettings("https://www.gingadaddy.com"));
-                yield return GetDefinition("Miatrix", GetSettings("https://www.miatrix.com"));
-                yield return GetDefinition("Newz-Complex", GetSettings("https://newz-complex.org/www"));
-                yield return GetDefinition("Newz69", GetSettings("https://newz69.keagaming.com"));
-                yield return GetDefinition("NinjaCentral", GetSettings("https://ninjacentral.co.za"));
-                yield return GetDefinition("Nzb.su", GetSettings("https://api.nzb.su"));
-                yield return GetDefinition("NZBCat", GetSettings("https://nzb.cat"));
-                yield return GetDefinition("NZBFinder", GetSettings("https://nzbfinder.ws"));
-                yield return GetDefinition("NZBgeek", GetSettings("https://api.nzbgeek.info"));
-                yield return GetDefinition("NzbNoob", GetSettings("https://www.nzbnoob.com"));
-                yield return GetDefinition("NZBNDX", GetSettings("https://www.nzbndx.com"));
-                yield return GetDefinition("NzbPlanet", GetSettings("https://api.nzbplanet.net"));
-                yield return GetDefinition("NZBStars", GetSettings("https://nzbstars.com"));
-                yield return GetDefinition("OZnzb", GetSettings("https://api.oznzb.com"));
-                yield return GetDefinition("SimplyNZBs", GetSettings("https://simplynzbs.com"));
-                yield return GetDefinition("SpotNZB", GetSettings("https://spotnzb.xyz"));
-                yield return GetDefinition("Tabula Rasa", GetSettings("https://www.tabula-rasa.pw", apiPath: @"/api/v1/api"));
-                yield return GetDefinition("Usenet Crawler", GetSettings("https://www.usenet-crawler.com"));
+                yield return GetDefinition("Miatrix", GetSettings("https://www.miatrix.com"), categories: new[] { 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000 });
+                yield return GetDefinition("Newz69", GetSettings("https://newz69.keagaming.com"), categories: new[] { 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000 });
+                yield return GetDefinition("NinjaCentral", GetSettings("https://ninjacentral.co.za"), categories: new[] { 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000 });
+                yield return GetDefinition("Nzb.su", GetSettings("https://api.nzb.su"), categories: new[] { 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000 });
+                yield return GetDefinition("NZBCat", GetSettings("https://nzb.cat"), categories: new[] { 1000, 2000, 3000, 4000, 5000, 6000, 7000 });
+                yield return GetDefinition("NZBFinder", GetSettings("https://nzbfinder.ws"), categories: new[] { 2000, 3000, 5000, 6000, 7000 });
+                yield return GetDefinition("NZBgeek", GetSettings("https://api.nzbgeek.info"), categories: new[] { 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000 });
+                yield return GetDefinition("NzbNoob", GetSettings("https://www.nzbnoob.com"), categories: new[] { 2000, 3000, 4000, 5000, 6000, 7000, 8000 });
+                yield return GetDefinition("NZBNDX", GetSettings("https://www.nzbndx.com"), categories: new[] { 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000 });
+                yield return GetDefinition("NzbPlanet", GetSettings("https://api.nzbplanet.net"), categories: new[] { 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000 });
+                yield return GetDefinition("NZBStars", GetSettings("https://nzbstars.com"), categories: new[] { 1000, 2000, 3000, 4000, 5000, 6000, 7000 });
+                yield return GetDefinition("Tabula Rasa", GetSettings("https://www.tabula-rasa.pw", apiPath: @"/api/v1/api"), categories: new[] { 1000, 2000, 3000, 4000, 5000, 6000, 7000 });
                 yield return GetDefinition("Generic Newznab", GetSettings(""));
             }
         }
@@ -117,8 +119,23 @@ namespace NzbDrone.Core.Indexers.Newznab
             _capabilitiesProvider = capabilitiesProvider;
         }
 
-        private IndexerDefinition GetDefinition(string name, NewznabSettings settings)
+        private IndexerDefinition GetDefinition(string name, NewznabSettings settings, IEnumerable<int> categories = null)
         {
+            var caps = new IndexerCapabilities();
+
+            if (categories != null)
+            {
+                foreach (var categoryId in categories)
+                {
+                    var mappedCat = NewznabStandardCategory.AllCats.FirstOrDefault(x => x.Id == categoryId);
+
+                    if (mappedCat != null)
+                    {
+                        caps.Categories.AddCategoryMapping(mappedCat.Id, mappedCat);
+                    }
+                }
+            }
+
             return new IndexerDefinition
             {
                 Enable = true,
@@ -130,7 +147,8 @@ namespace NzbDrone.Core.Indexers.Newznab
                 SupportsRss = SupportsRss,
                 SupportsSearch = SupportsSearch,
                 SupportsRedirect = SupportsRedirect,
-                Capabilities = Capabilities
+                SupportsPagination = SupportsPagination,
+                Capabilities = caps
             };
         }
 
@@ -176,13 +194,13 @@ namespace NzbDrone.Core.Indexers.Newznab
                 }
 
                 if (capabilities.MovieSearchParams != null &&
-                    new[] { MovieSearchParam.Q, MovieSearchParam.ImdbId }.Any(v => capabilities.MovieSearchParams.Contains(v)))
+                    new[] { MovieSearchParam.Q, MovieSearchParam.ImdbId, MovieSearchParam.TmdbId, MovieSearchParam.TraktId }.Any(v => capabilities.MovieSearchParams.Contains(v)))
                 {
                     return null;
                 }
 
                 if (capabilities.TvSearchParams != null &&
-                    new[] { TvSearchParam.Q, TvSearchParam.TvdbId, TvSearchParam.RId }.Any(v => capabilities.TvSearchParams.Contains(v)) &&
+                    new[] { TvSearchParam.Q, TvSearchParam.TvdbId, TvSearchParam.ImdbId, TvSearchParam.TmdbId, TvSearchParam.RId }.Any(v => capabilities.TvSearchParams.Contains(v)) &&
                     new[] { TvSearchParam.Season, TvSearchParam.Ep }.All(v => capabilities.TvSearchParams.Contains(v)))
                 {
                     return null;
@@ -206,7 +224,19 @@ namespace NzbDrone.Core.Indexers.Newznab
             {
                 _logger.Warn(ex, "Unable to connect to indexer: " + ex.Message);
 
-                return new ValidationFailure(string.Empty, "Unable to connect to indexer, check the log for more details");
+                return new ValidationFailure(string.Empty, "Unable to connect to indexer, check the log above the ValidationFailure for more details");
+            }
+        }
+
+        private int GetProviderPageSize()
+        {
+            try
+            {
+                return _capabilitiesProvider.GetCapabilities(Settings, Definition).LimitsDefault.GetValueOrDefault(100);
+            }
+            catch
+            {
+                return 100;
             }
         }
     }

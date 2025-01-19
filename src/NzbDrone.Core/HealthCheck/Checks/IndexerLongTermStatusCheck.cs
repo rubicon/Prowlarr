@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Indexers;
@@ -9,15 +10,15 @@ namespace NzbDrone.Core.HealthCheck.Checks
 {
     [CheckOn(typeof(ProviderUpdatedEvent<IIndexer>))]
     [CheckOn(typeof(ProviderDeletedEvent<IIndexer>))]
+    [CheckOn(typeof(ProviderBulkUpdatedEvent<IIndexer>))]
+    [CheckOn(typeof(ProviderBulkDeletedEvent<IIndexer>))]
     [CheckOn(typeof(ProviderStatusChangedEvent<IIndexer>))]
     public class IndexerLongTermStatusCheck : HealthCheckBase
     {
         private readonly IIndexerFactory _providerFactory;
         private readonly IIndexerStatusService _providerStatusService;
 
-        public IndexerLongTermStatusCheck(IIndexerFactory providerFactory,
-                                          IIndexerStatusService providerStatusService,
-                                          ILocalizationService localizationService)
+        public IndexerLongTermStatusCheck(IIndexerFactory providerFactory, IIndexerStatusService providerStatusService, ILocalizationService localizationService)
             : base(localizationService)
         {
             _providerFactory = providerFactory;
@@ -28,13 +29,12 @@ namespace NzbDrone.Core.HealthCheck.Checks
         {
             var enabledProviders = _providerFactory.GetAvailableProviders();
             var backOffProviders = enabledProviders.Join(_providerStatusService.GetBlockedProviders(),
-                                                       i => i.Definition.Id,
-                                                       s => s.ProviderId,
-                                                       (i, s) => new { Provider = i, Status = s })
-                                                   .Where(p => p.Status.InitialFailure.HasValue &&
-                                                               p.Status.InitialFailure.Value.Before(
-                                                                   DateTime.UtcNow.AddHours(-6)))
-                                                   .ToList();
+                    i => i.Definition.Id,
+                    s => s.ProviderId,
+                    (i, s) => new { Provider = i, Status = s })
+                .Where(p => p.Status.InitialFailure.HasValue &&
+                            p.Status.InitialFailure.Value.Before(DateTime.UtcNow.AddHours(-6)))
+                .ToList();
 
             if (backOffProviders.Empty())
             {
@@ -45,14 +45,16 @@ namespace NzbDrone.Core.HealthCheck.Checks
             {
                 return new HealthCheck(GetType(),
                     HealthCheckResult.Error,
-                    _localizationService.GetLocalizedString("IndexerLongTermStatusCheckAllClientMessage"),
+                    _localizationService.GetLocalizedString("IndexerLongTermStatusAllUnavailableHealthCheckMessage"),
                     "#indexers-are-unavailable-due-to-failures");
             }
 
             return new HealthCheck(GetType(),
                 HealthCheckResult.Warning,
-                string.Format(_localizationService.GetLocalizedString("IndexerLongTermStatusCheckSingleClientMessage"),
-                    string.Join(", ", backOffProviders.Select(v => v.Provider.Definition.Name))),
+                _localizationService.GetLocalizedString("IndexerLongTermStatusUnavailableHealthCheckMessage", new Dictionary<string, object>
+                {
+                    { "indexerNames", string.Join(", ", backOffProviders.Select(v => v.Provider.Definition.Name)) }
+                }),
                 "#indexers-are-unavailable-due-to-failures");
         }
     }

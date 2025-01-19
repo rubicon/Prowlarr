@@ -1,8 +1,6 @@
 using System;
 using System.IO;
 using System.Linq;
-using System.Security.AccessControl;
-using System.Security.Principal;
 using NLog;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.Exceptions;
@@ -161,7 +159,7 @@ namespace NzbDrone.Common.EnvironmentInfo
 
         private void CleanupSqLiteRollbackFiles()
         {
-            _diskProvider.GetFiles(_appFolderInfo.AppDataFolder, SearchOption.TopDirectoryOnly)
+            _diskProvider.GetFiles(_appFolderInfo.AppDataFolder, false)
                          .Where(f => Path.GetFileName(f).StartsWith("nzbdrone.db"))
                          .ToList()
                          .ForEach(_diskProvider.DeleteFile);

@@ -1,7 +1,7 @@
 using System.Linq;
 using NLog;
 using NzbDrone.Core.Indexers;
-using NzbDrone.Core.Indexers.Cardigann;
+using NzbDrone.Core.Indexers.Definitions.Cardigann;
 using NzbDrone.Core.IndexerVersions;
 using NzbDrone.Core.Localization;
 using NzbDrone.Core.ThingiProvider.Events;
@@ -9,6 +9,7 @@ using NzbDrone.Core.ThingiProvider.Events;
 namespace NzbDrone.Core.HealthCheck.Checks
 {
     [CheckOn(typeof(ProviderDeletedEvent<IIndexer>))]
+    [CheckOn(typeof(ProviderBulkDeletedEvent<IIndexer>))]
     public class OutdatedDefinitionCheck : HealthCheckBase
     {
         private readonly IIndexerDefinitionUpdateService _indexerDefinitionUpdateService;
@@ -35,10 +36,13 @@ namespace NzbDrone.Core.HealthCheck.Checks
                 return new HealthCheck(GetType());
             }
 
+            var healthType = HealthCheckResult.Warning;
+            var healthMessage = string.Format(_localizationService.GetLocalizedString("IndexerObsoleteCheckMessage"),
+                string.Join(", ", oldIndexers.Select(v => v.Definition.Name)));
+
             return new HealthCheck(GetType(),
-                HealthCheckResult.Warning,
-                string.Format(_localizationService.GetLocalizedString("IndexerObsoleteCheckMessage"),
-                string.Join(", ", oldIndexers.Select(v => v.Definition.Name))),
+                healthType,
+                healthMessage,
                 "#indexers-are-obsolete");
         }
 

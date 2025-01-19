@@ -3,30 +3,35 @@ using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.Globalization;
 using System.Linq;
+using System.Net.Http;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using AngleSharp.Html.Parser;
-using FluentValidation;
 using NLog;
+using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
-using NzbDrone.Core.Annotations;
 using NzbDrone.Core.Configuration;
+using NzbDrone.Core.Indexers.Exceptions;
+using NzbDrone.Core.Indexers.Settings;
 using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
-using NzbDrone.Core.Validation;
 
 namespace NzbDrone.Core.Indexers.Definitions
 {
-    public class HDTorrents : TorrentIndexerBase<HDTorrentsSettings>
+    public class HDTorrents : TorrentIndexerBase<UserPassTorrentBaseSettings>
     {
         public override string Name => "HD-Torrents";
 
-        public override string[] IndexerUrls => new string[] { "https://hdts.ru/" };
+        public override string[] IndexerUrls => new[]
+        {
+            "https://hdts.ru/",
+            "https://hd-torrents.org/",
+            "https://hd-torrents.net/",
+            "https://hd-torrents.me/",
+        };
         public override string Description => "HD-Torrents is a private torrent website with HD torrents and strict rules on their content.";
-        private string LoginUrl => Settings.BaseUrl + "login.php";
-        public override DownloadProtocol Protocol => DownloadProtocol.Torrent;
         public override IndexerPrivacy Privacy => IndexerPrivacy.Private;
         public override IndexerCapabilities Capabilities => SetCapabilities();
 
@@ -37,7 +42,7 @@ namespace NzbDrone.Core.Indexers.Definitions
 
         public override IIndexerRequestGenerator GetRequestGenerator()
         {
-            return new HDTorrentsRequestGenerator() { Settings = Settings, Capabilities = Capabilities };
+            return new HDTorrentsRequestGenerator(Settings, Capabilities);
         }
 
         public override IParseIndexerResponse GetParser()
@@ -47,39 +52,43 @@ namespace NzbDrone.Core.Indexers.Definitions
 
         protected override async Task DoLogin()
         {
-            var requestBuilder = new HttpRequestBuilder(LoginUrl)
+            Cookies = null;
+
+            var loginUrl = Settings.BaseUrl + "login.php";
+
+            var requestBuilder = new HttpRequestBuilder(loginUrl)
             {
-                LogResponseContent = true
+                LogResponseContent = true,
+                Method = HttpMethod.Post
             };
 
-            requestBuilder.Method = HttpMethod.POST;
-            requestBuilder.PostProcess += r => r.RequestTimeout = TimeSpan.FromSeconds(15);
-
-            var cookies = Cookies;
-
-            Cookies = null;
             var authLoginRequest = requestBuilder
                 .AddFormParameter("uid", Settings.Username)
                 .AddFormParameter("pwd", Settings.Password)
-                .SetHeader("Content-Type", "multipart/form-data")
+                .SetHeader("Content-Type", "application/x-www-form-urlencoded")
+                .SetHeader("Referer", loginUrl)
                 .Build();
 
             var response = await ExecuteAuth(authLoginRequest);
 
-            cookies = response.GetCookies();
-            UpdateCookies(cookies, DateTime.Now + TimeSpan.FromDays(30));
+            if (response.Content != null && !response.Content.ContainsIgnoreCase("If your browser doesn't have javascript enabled"))
+            {
+                var parser = new HtmlParser();
+                using var dom = await parser.ParseDocumentAsync(response.Content);
 
-            _logger.Debug("HDTorrents authentication succeeded.");
+                var errorMessage = dom.QuerySelector("div > font[color=\"#FF0000\"]")?.TextContent.Trim();
+
+                throw new IndexerAuthException(errorMessage ?? "Couldn't login");
+            }
+
+            UpdateCookies(response.GetCookies(), DateTime.Now.AddDays(30));
+
+            _logger.Debug("Authentication succeeded");
         }
 
         protected override bool CheckIfLoginNeeded(HttpResponse httpResponse)
         {
-            if (httpResponse.Content.Contains("Error:You're not authorized"))
-            {
-                return true;
-            }
-
-            return false;
+            return httpResponse.Content.Contains("Error:You're not authorized");
         }
 
         private IndexerCapabilities SetCapabilities()
@@ -87,21 +96,25 @@ namespace NzbDrone.Core.Indexers.Definitions
             var caps = new IndexerCapabilities
             {
                 TvSearchParams = new List<TvSearchParam>
-                       {
-                           TvSearchParam.Q, TvSearchParam.Season, TvSearchParam.Ep, TvSearchParam.ImdbId
-                       },
+                {
+                    TvSearchParam.Q, TvSearchParam.Season, TvSearchParam.Ep, TvSearchParam.ImdbId
+                },
                 MovieSearchParams = new List<MovieSearchParam>
-                       {
-                           MovieSearchParam.Q, MovieSearchParam.ImdbId
-                       },
+                {
+                    MovieSearchParam.Q, MovieSearchParam.ImdbId
+                },
                 MusicSearchParams = new List<MusicSearchParam>
-                       {
-                           MusicSearchParam.Q
-                       }
+                {
+                    MusicSearchParam.Q
+                },
+                Flags = new List<IndexerFlag>
+                {
+                    IndexerFlag.Internal
+                }
             };
 
-            caps.Categories.AddCategoryMapping("70", NewznabStandardCategory.MoviesUHD, "Movie/UHD/Blu-Ray");
-            caps.Categories.AddCategoryMapping("1", NewznabStandardCategory.MoviesHD, "Movie/Blu-Ray");
+            caps.Categories.AddCategoryMapping("70", NewznabStandardCategory.MoviesBluRay, "Movie/UHD/Blu-Ray");
+            caps.Categories.AddCategoryMapping("1", NewznabStandardCategory.MoviesBluRay, "Movie/Blu-Ray");
             caps.Categories.AddCategoryMapping("71", NewznabStandardCategory.MoviesUHD, "Movie/UHD/Remux");
             caps.Categories.AddCategoryMapping("2", NewznabStandardCategory.MoviesHD, "Movie/Remux");
             caps.Categories.AddCategoryMapping("5", NewznabStandardCategory.MoviesHD, "Movie/1080p/i");
@@ -139,20 +152,24 @@ namespace NzbDrone.Core.Indexers.Definitions
 
     public class HDTorrentsRequestGenerator : IIndexerRequestGenerator
     {
-        public HDTorrentsSettings Settings { get; set; }
-        public IndexerCapabilities Capabilities { get; set; }
+        private readonly UserPassTorrentBaseSettings _settings;
+        private readonly IndexerCapabilities _capabilities;
 
-        public HDTorrentsRequestGenerator()
+        public HDTorrentsRequestGenerator(UserPassTorrentBaseSettings settings, IndexerCapabilities capabilities)
         {
+            _settings = settings;
+            _capabilities = capabilities;
         }
 
         private IEnumerable<IndexerRequest> GetPagedRequests(string term, int[] categories, string imdbId = null)
         {
-            var searchUrl = Settings.BaseUrl + "torrents.php?" + string.Join(string.Empty, Capabilities.Categories.MapTorznabCapsToTrackers(categories).Select(cat => $"category[]={cat}&"));
+            var searchUrl = _settings.BaseUrl + "torrents.php?" + string.Join(string.Empty, _capabilities.Categories.MapTorznabCapsToTrackers(categories).Select(cat => $"category[]={cat}&"));
+
+            var search = new[] { imdbId, term };
 
             var queryCollection = new NameValueCollection
             {
-                { "search", imdbId ?? term },
+                { "search", string.Join(" ", search.Where(s => !string.IsNullOrEmpty(s))) },
                 { "active", "0" },
                 { "options", "0" }
             };
@@ -160,16 +177,14 @@ namespace NzbDrone.Core.Indexers.Definitions
             // manually url encode parenthesis to prevent "hacking" detection
             searchUrl += queryCollection.GetQueryString().Replace("(", "%28").Replace(")", "%29").Replace(".", " ");
 
-            var request = new IndexerRequest(searchUrl, HttpAccept.Rss);
-
-            yield return request;
+            yield return new IndexerRequest(searchUrl, HttpAccept.Html);
         }
 
         public IndexerPageableRequestChain GetSearchRequests(MovieSearchCriteria searchCriteria)
         {
             var pageableRequests = new IndexerPageableRequestChain();
 
-            pageableRequests.Add(GetPagedRequests(string.Format("{0}", searchCriteria.SearchTerm), searchCriteria.Categories, searchCriteria.FullImdbId));
+            pageableRequests.Add(GetPagedRequests(searchCriteria.SearchTerm, searchCriteria.Categories, searchCriteria.FullImdbId));
 
             return pageableRequests;
         }
@@ -178,7 +193,7 @@ namespace NzbDrone.Core.Indexers.Definitions
         {
             var pageableRequests = new IndexerPageableRequestChain();
 
-            pageableRequests.Add(GetPagedRequests(string.Format("{0}", searchCriteria.SearchTerm), searchCriteria.Categories));
+            pageableRequests.Add(GetPagedRequests(searchCriteria.SanitizedSearchTerm, searchCriteria.Categories));
 
             return pageableRequests;
         }
@@ -187,7 +202,7 @@ namespace NzbDrone.Core.Indexers.Definitions
         {
             var pageableRequests = new IndexerPageableRequestChain();
 
-            pageableRequests.Add(GetPagedRequests(string.Format("{0}", searchCriteria.SearchTerm), searchCriteria.Categories, searchCriteria.FullImdbId));
+            pageableRequests.Add(GetPagedRequests(searchCriteria.SanitizedTvSearchString, searchCriteria.Categories, searchCriteria.FullImdbId));
 
             return pageableRequests;
         }
@@ -196,7 +211,7 @@ namespace NzbDrone.Core.Indexers.Definitions
         {
             var pageableRequests = new IndexerPageableRequestChain();
 
-            pageableRequests.Add(GetPagedRequests(string.Format("{0}", searchCriteria.SearchTerm), searchCriteria.Categories));
+            pageableRequests.Add(GetPagedRequests(searchCriteria.SanitizedSearchTerm, searchCriteria.Categories));
 
             return pageableRequests;
         }
@@ -205,7 +220,7 @@ namespace NzbDrone.Core.Indexers.Definitions
         {
             var pageableRequests = new IndexerPageableRequestChain();
 
-            pageableRequests.Add(GetPagedRequests(string.Format("{0}", searchCriteria.SearchTerm), searchCriteria.Categories));
+            pageableRequests.Add(GetPagedRequests(searchCriteria.SanitizedSearchTerm, searchCriteria.Categories));
 
             return pageableRequests;
         }
@@ -216,11 +231,11 @@ namespace NzbDrone.Core.Indexers.Definitions
 
     public class HDTorrentsParser : IParseIndexerResponse
     {
-        private readonly HDTorrentsSettings _settings;
+        private readonly UserPassTorrentBaseSettings _settings;
         private readonly IndexerCapabilitiesCategories _categories;
 
-        private readonly Regex _posterRegex = new Regex(@"src=\\'./([^']+)\\'", RegexOptions.IgnoreCase);
-        private readonly HashSet<string> _freeleechRanks = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        private readonly Regex _posterRegex = new (@"src=\\'./([^']+)\\'", RegexOptions.IgnoreCase);
+        private readonly HashSet<string> _freeleechRanks = new (StringComparer.OrdinalIgnoreCase)
         {
             "VIP",
             "Uploader",
@@ -230,7 +245,7 @@ namespace NzbDrone.Core.Indexers.Definitions
             "Owner"
         };
 
-        public HDTorrentsParser(HDTorrentsSettings settings, IndexerCapabilitiesCategories categories)
+        public HDTorrentsParser(UserPassTorrentBaseSettings settings, IndexerCapabilitiesCategories categories)
         {
             _settings = settings;
             _categories = categories;
@@ -238,13 +253,13 @@ namespace NzbDrone.Core.Indexers.Definitions
 
         public IList<ReleaseInfo> ParseResponse(IndexerResponse indexerResponse)
         {
-            var torrentInfos = new List<TorrentInfo>();
+            var releaseInfos = new List<ReleaseInfo>();
 
             var parser = new HtmlParser();
-            var dom = parser.ParseDocument(indexerResponse.Content);
+            using var dom = parser.ParseDocument(indexerResponse.Content);
 
             var userInfo = dom.QuerySelector("table.navus tr");
-            var userRank = userInfo.Children[1].TextContent.Replace("Rank:", string.Empty).Trim();
+            var userRank = userInfo?.Children[1].TextContent.Replace("Rank:", string.Empty).Trim();
             var hasFreeleech = _freeleechRanks.Contains(userRank);
 
             var rows = dom.QuerySelectorAll("table.mainblockcontenttt tr:has(td.mainblockcontent)");
@@ -255,18 +270,19 @@ namespace NzbDrone.Core.Indexers.Definitions
                 var details = new Uri(_settings.BaseUrl + mainLink.GetAttribute("href"));
 
                 var posterMatch = _posterRegex.Match(mainLink.GetAttribute("onmouseover"));
-                var poster = posterMatch.Success ? _settings.BaseUrl + posterMatch.Groups[1].Value.Replace("\\", "/") : null;
+                var poster = posterMatch.Success
+                    ? _settings.BaseUrl + posterMatch.Groups[1].Value.Replace("\\", "/")
+                    : null;
 
                 var link = new Uri(_settings.BaseUrl + row.Children[4].FirstElementChild.GetAttribute("href"));
-                var description = row.Children[2].QuerySelector("span").TextContent;
+                var description = row.Children[2].QuerySelector("span")?.TextContent.Trim();
                 var size = ParseUtil.GetBytes(row.Children[7].TextContent);
 
-                var dateTag = row.Children[6].FirstElementChild;
-                var dateString = string.Join(" ", dateTag.Attributes.Select(attr => attr.Name));
-                var publishDate = DateTime.ParseExact(dateString, "dd MMM yyyy HH:mm:ss zz00", CultureInfo.InvariantCulture).ToLocalTime();
+                var dateAdded = string.Join(" ", row.Children[6].FirstElementChild.Attributes.Select(a => a.Name).Take(4));
+                var publishDate = DateTime.ParseExact(dateAdded, "dd MMM yyyy HH:mm:ss", CultureInfo.InvariantCulture);
 
-                var catStr = row.FirstElementChild.FirstElementChild.GetAttribute("href").Split('=')[1];
-                var cat = _categories.MapTrackerCatToNewznab(catStr);
+                var categoryLink = row.FirstElementChild.FirstElementChild.GetAttribute("href");
+                var cat = ParseUtil.GetArgumentFromQueryString(categoryLink, "category");
 
                 // Sometimes the uploader column is missing, so seeders, leechers, and grabs may be at a different index.
                 // There's room for improvement, but this works for now.
@@ -322,72 +338,43 @@ namespace NzbDrone.Core.Indexers.Definitions
                     dlVolumeFactor = 0.25;
                 }
 
-                var imdbLink = row.QuerySelector("a[href*=\"www.imdb.com/title/\"]")?.GetAttribute("href");
-                var imdb = !string.IsNullOrWhiteSpace(imdbLink) ? ParseUtil.GetImdbID(imdbLink) : null;
+                var imdbId = ParseUtil.GetImdbId(row.QuerySelector("a[href*=\"www.imdb.com/title/\"]")?.GetAttribute("href")?.TrimEnd('/')?.Split('/')?.LastOrDefault());
+
+                var flags = new HashSet<IndexerFlag>();
+
+                if (row.QuerySelector("img[src$=\"internal.png\"]") != null)
+                {
+                    flags.Add(IndexerFlag.Internal);
+                }
 
                 var release = new TorrentInfo
                 {
                     Title = title,
+                    Description = description,
                     Guid = details.AbsoluteUri,
                     DownloadUrl = link.AbsoluteUri,
                     InfoUrl = details.AbsoluteUri,
                     PosterUrl = poster,
                     PublishDate = publishDate,
-                    Categories = cat,
-                    ImdbId = imdb ?? 0,
+                    Categories = _categories.MapTrackerCatToNewznab(cat),
+                    ImdbId = imdbId ?? 0,
                     Size = size,
                     Grabs = grabs,
                     Seeders = seeders,
                     Peers = peers,
+                    IndexerFlags = flags,
                     DownloadVolumeFactor = dlVolumeFactor,
                     UploadVolumeFactor = upVolumeFactor,
                     MinimumRatio = 1,
                     MinimumSeedTime = 172800 // 48 hours
                 };
 
-                torrentInfos.Add(release);
+                releaseInfos.Add(release);
             }
 
-            return torrentInfos.ToArray();
+            return releaseInfos.ToArray();
         }
 
         public Action<IDictionary<string, string>, DateTime?> CookiesUpdater { get; set; }
-    }
-
-    public class HDTorrentsSettingsValidator : AbstractValidator<HDTorrentsSettings>
-    {
-        public HDTorrentsSettingsValidator()
-        {
-            RuleFor(c => c.Username).NotEmpty();
-            RuleFor(c => c.Password).NotEmpty();
-        }
-    }
-
-    public class HDTorrentsSettings : IIndexerSettings
-    {
-        private static readonly HDTorrentsSettingsValidator Validator = new HDTorrentsSettingsValidator();
-
-        public HDTorrentsSettings()
-        {
-            Username = "";
-            Password = "";
-        }
-
-        [FieldDefinition(1, Label = "Base Url", Type = FieldType.Select, SelectOptionsProviderAction = "getUrls", HelpText = "Select which baseurl Prowlarr will use for requests to the site")]
-        public string BaseUrl { get; set; }
-
-        [FieldDefinition(2, Label = "Username", HelpText = "Site Username", Privacy = PrivacyLevel.UserName)]
-        public string Username { get; set; }
-
-        [FieldDefinition(3, Label = "Password", HelpText = "Site Password", Privacy = PrivacyLevel.Password, Type = FieldType.Password)]
-        public string Password { get; set; }
-
-        [FieldDefinition(4)]
-        public IndexerBaseSettings BaseSettings { get; set; } = new IndexerBaseSettings();
-
-        public NzbDroneValidationResult Validate()
-        {
-            return new NzbDroneValidationResult(Validator.Validate(this));
-        }
     }
 }

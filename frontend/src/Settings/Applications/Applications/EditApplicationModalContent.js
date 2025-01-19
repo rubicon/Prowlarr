@@ -14,13 +14,29 @@ import ModalContent from 'Components/Modal/ModalContent';
 import ModalFooter from 'Components/Modal/ModalFooter';
 import ModalHeader from 'Components/Modal/ModalHeader';
 import { inputTypes, kinds } from 'Helpers/Props';
+import AdvancedSettingsButton from 'Settings/AdvancedSettingsButton';
 import translate from 'Utilities/String/translate';
 import styles from './EditApplicationModalContent.css';
 
 const syncLevelOptions = [
-  { key: 'disabled', value: translate('Disabled') },
-  { key: 'addOnly', value: translate('AddRemoveOnly') },
-  { key: 'fullSync', value: translate('FullSync') }
+  {
+    key: 'disabled',
+    get value() {
+      return translate('Disabled');
+    }
+  },
+  {
+    key: 'addOnly',
+    get value() {
+      return translate('AddRemoveOnly');
+    }
+  },
+  {
+    key: 'fullSync',
+    get value() {
+      return translate('FullSync');
+    }
+  }
 ];
 
 function EditApplicationModalContent(props) {
@@ -38,11 +54,13 @@ function EditApplicationModalContent(props) {
     onSavePress,
     onTestPress,
     onDeleteApplicationPress,
+    onAdvancedSettingsPress,
     ...otherProps
   } = props;
 
   const {
     id,
+    implementationName,
     name,
     syncLevel,
     tags,
@@ -53,7 +71,7 @@ function EditApplicationModalContent(props) {
   return (
     <ModalContent onModalClose={onModalClose}>
       <ModalHeader>
-        {`${id ? translate('Edit') : translate('Add')} ${translate('Application')}`}
+        {id ? translate('EditApplicationImplementation', { implementationName }) : translate('AddApplicationImplementation', { implementationName })}
       </ModalHeader>
 
       <ModalBody>
@@ -100,7 +118,10 @@ function EditApplicationModalContent(props) {
                   type={inputTypes.SELECT}
                   values={syncLevelOptions}
                   name="syncLevel"
-                  helpText={`${translate('SyncLevelAddRemove')}<br>${translate('SyncLevelFull')}`}
+                  helpTexts={[
+                    translate('SyncLevelAddRemove'),
+                    translate('SyncLevelFull')
+                  ]}
                   {...syncLevel}
                   onChange={onInputChange}
                 />
@@ -112,7 +133,8 @@ function EditApplicationModalContent(props) {
                 <FormInputGroup
                   type={inputTypes.TAG}
                   name="tags"
-                  helpText={translate('TagsHelpText')}
+                  helpText={translate('ApplicationTagsHelpText')}
+                  helpTextWarning={translate('ApplicationTagsHelpTextWarning')}
                   {...tags}
                   onChange={onInputChange}
                 />
@@ -148,6 +170,12 @@ function EditApplicationModalContent(props) {
               {translate('Delete')}
             </Button>
         }
+
+        <AdvancedSettingsButton
+          advancedSettings={advancedSettings}
+          onAdvancedSettingsPress={onAdvancedSettingsPress}
+          showLabel={false}
+        />
 
         <SpinnerErrorButton
           isSpinning={isTesting}
@@ -188,7 +216,8 @@ EditApplicationModalContent.propTypes = {
   onModalClose: PropTypes.func.isRequired,
   onSavePress: PropTypes.func.isRequired,
   onTestPress: PropTypes.func.isRequired,
-  onDeleteApplicationPress: PropTypes.func
+  onDeleteApplicationPress: PropTypes.func,
+  onAdvancedSettingsPress: PropTypes.func.isRequired
 };
 
 export default EditApplicationModalContent;

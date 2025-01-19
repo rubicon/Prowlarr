@@ -2,7 +2,6 @@ import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
 import { createSelector } from 'reselect';
-import { executeCommand } from 'Store/Actions/commandActions';
 
 function createReleaseSelector() {
   return createSelector(
@@ -18,30 +17,26 @@ function createMapStateToProps() {
   return createSelector(
     createReleaseSelector(),
     (
-      movie
+      release
     ) => {
 
-      // If a movie is deleted this selector may fire before the parent
-      // selecors, which will result in an undefined movie, if that happens
+      // If a release is deleted this selector may fire before the parent
+      // selecors, which will result in an undefined release, if that happens
       // we want to return early here and again in the render function to avoid
-      // trying to show a movie that has no information available.
+      // trying to show a release that has no information available.
 
-      if (!movie) {
+      if (!release) {
         return {};
       }
 
       return {
-        ...movie
+        ...release
       };
     }
   );
 }
 
-const mapDispatchToProps = {
-  dispatchExecuteCommand: executeCommand
-};
-
-class MovieIndexItemConnector extends Component {
+class SearchIndexItemConnector extends Component {
 
   //
   // Render
@@ -66,9 +61,9 @@ class MovieIndexItemConnector extends Component {
   }
 }
 
-MovieIndexItemConnector.propTypes = {
+SearchIndexItemConnector.propTypes = {
   guid: PropTypes.string,
   component: PropTypes.elementType.isRequired
 };
 
-export default connect(createMapStateToProps, mapDispatchToProps)(MovieIndexItemConnector);
+export default connect(createMapStateToProps, null)(SearchIndexItemConnector);

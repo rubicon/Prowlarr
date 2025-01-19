@@ -30,6 +30,10 @@ namespace NzbDrone.Core.Applications.LazyLibrarian
         public bool Enabled { get; set; }
         public string Altername { get; set; }
         public LazyLibrarianProviderType Type { get; set; }
+        public int Priority { get; set; }
+        public double SeedRatio { get; set; }
+        public int SeedTime { get; set; }
+        public int MinimumSeeders { get; set; }
 
         public bool Equals(LazyLibrarianIndexer other)
         {
@@ -43,7 +47,11 @@ namespace NzbDrone.Core.Applications.LazyLibrarian
                 other.Name == Name &&
                 other.Categories == Categories &&
                 other.Enabled == Enabled &&
-                other.Altername == Altername;
+                other.Altername == Altername &&
+                other.Priority == Priority &&
+                other.SeedRatio == SeedRatio &&
+                other.SeedTime == SeedTime &&
+                other.MinimumSeeders == MinimumSeeders;
         }
     }
 }

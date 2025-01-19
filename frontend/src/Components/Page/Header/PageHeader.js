@@ -7,7 +7,7 @@ import { icons } from 'Helpers/Props';
 import translate from 'Utilities/String/translate';
 import IndexerSearchInputConnector from './IndexerSearchInputConnector';
 import KeyboardShortcutsModal from './KeyboardShortcutsModal';
-import PageHeaderActionsMenuConnector from './PageHeaderActionsMenuConnector';
+import PageHeaderActionsMenu from './PageHeaderActionsMenu';
 import styles from './PageHeader.css';
 
 class PageHeader extends Component {
@@ -56,6 +56,7 @@ class PageHeader extends Component {
             <img
               className={styles.logo}
               src={`${window.Prowlarr.urlBase}/Content/Images/logo.png`}
+              alt="Prowlarr Logo"
             />
           </Link>
         </div>
@@ -74,8 +75,10 @@ class PageHeader extends Component {
           <IconButton
             className={styles.donate}
             name={icons.HEART}
-            to="https://opencollective.com/prowlarr"
+            aria-label="Donate"
+            to="https://prowlarr.com/donate"
             size={14}
+            title={translate('Donate')}
           />
           <IconButton
             className={styles.translate}
@@ -84,7 +87,8 @@ class PageHeader extends Component {
             to="https://translate.servarr.com/projects/servarr/prowlarr/"
             size={24}
           />
-          <PageHeaderActionsMenuConnector
+
+          <PageHeaderActionsMenu
             onKeyboardShortcutsPress={this.onOpenKeyboardShortcutsModal}
           />
         </div>

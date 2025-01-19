@@ -1,0 +1,31 @@
+'Area: API':
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/Prowlarr.Api.V1/**/*
+
+'Area: Db-migration':
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/NzbDrone.Core/Datastore/Migration/*
+
+'Area: Download Clients':
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/NzbDrone.Core/Download/Clients/**/*
+
+'Area: Indexer':
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/NzbDrone.Core/Indexers/**/*
+
+'Area: Notifications':
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/NzbDrone.Core/Notifications/**/*
+
+'Area: UI':
+  - changed-files:
+      - any-glob-to-any-file:
+          - frontend/**/*
+          - package.json
+          - yarn.lock

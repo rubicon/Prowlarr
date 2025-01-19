@@ -1,14 +1,12 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Net;
 using FluentValidation.Results;
 using NLog;
-using NzbDrone.Common.Cache;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.Extensions;
-using NzbDrone.Common.Http;
 using NzbDrone.Core.Configuration;
+using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Validation;
 
@@ -17,30 +15,28 @@ namespace NzbDrone.Core.Download.Clients.UTorrent
     public class UTorrent : TorrentClientBase<UTorrentSettings>
     {
         private readonly IUTorrentProxy _proxy;
-        private readonly ICached<UTorrentTorrentCache> _torrentCache;
 
         public UTorrent(IUTorrentProxy proxy,
-                        ICacheManager cacheManager,
                         ITorrentFileInfoReader torrentFileInfoReader,
-                        IHttpClient httpClient,
+                        ISeedConfigProvider seedConfigProvider,
                         IConfigService configService,
                         IDiskProvider diskProvider,
                         Logger logger)
-            : base(torrentFileInfoReader, httpClient, configService, diskProvider, logger)
+            : base(torrentFileInfoReader, seedConfigProvider, configService, diskProvider, logger)
         {
             _proxy = proxy;
-
-            _torrentCache = cacheManager.GetCache<UTorrentTorrentCache>(GetType(), "differentialTorrents");
         }
 
-        protected override string AddFromMagnetLink(ReleaseInfo release, string hash, string magnetLink)
+        protected override string AddFromMagnetLink(TorrentInfo release, string hash, string magnetLink)
         {
             _proxy.AddTorrentFromUrl(magnetLink, Settings);
+            _proxy.SetTorrentSeedingConfiguration(hash, release.SeedConfiguration, Settings);
 
-            //_proxy.SetTorrentSeedingConfiguration(hash, release.SeedConfiguration, Settings);
-            if (Settings.Category.IsNotNullOrWhiteSpace())
+            var category = GetCategoryForRelease(release) ?? Settings.Category;
+
+            if (category.IsNotNullOrWhiteSpace())
             {
-                _proxy.SetTorrentLabel(hash, Settings.Category, Settings);
+                _proxy.SetTorrentLabel(hash, category, Settings);
             }
 
             if (Settings.Priority == (int)UTorrentPriority.First)
@@ -53,14 +49,16 @@ namespace NzbDrone.Core.Download.Clients.UTorrent
             return hash;
         }
 
-        protected override string AddFromTorrentFile(ReleaseInfo release, string hash, string filename, byte[] fileContent)
+        protected override string AddFromTorrentFile(TorrentInfo release, string hash, string filename, byte[] fileContent)
         {
             _proxy.AddTorrentFromFile(filename, fileContent, Settings);
+            _proxy.SetTorrentSeedingConfiguration(hash, release.SeedConfiguration, Settings);
 
-            //_proxy.SetTorrentSeedingConfiguration(hash, release.SeedConfiguration, Settings);
-            if (Settings.Category.IsNotNullOrWhiteSpace())
+            var category = GetCategoryForRelease(release) ?? Settings.Category;
+
+            if (category.IsNotNullOrWhiteSpace())
             {
-                _proxy.SetTorrentLabel(hash, Settings.Category, Settings);
+                _proxy.SetTorrentLabel(hash, category, Settings);
             }
 
             if (Settings.Priority == (int)UTorrentPriority.First)
@@ -74,40 +72,7 @@ namespace NzbDrone.Core.Download.Clients.UTorrent
         }
 
         public override string Name => "uTorrent";
-
-        private List<UTorrentTorrent> GetTorrents()
-        {
-            List<UTorrentTorrent> torrents;
-
-            var cacheKey = string.Format("{0}:{1}:{2}", Settings.Host, Settings.Port, Settings.Category);
-            var cache = _torrentCache.Find(cacheKey);
-
-            var response = _proxy.GetTorrents(cache == null ? null : cache.CacheID, Settings);
-
-            if (cache != null && response.Torrents == null)
-            {
-                var removedAndUpdated = new HashSet<string>(response.TorrentsChanged.Select(v => v.Hash).Concat(response.TorrentsRemoved));
-
-                torrents = cache.Torrents
-                    .Where(v => !removedAndUpdated.Contains(v.Hash))
-                    .Concat(response.TorrentsChanged)
-                    .ToList();
-            }
-            else
-            {
-                torrents = response.Torrents;
-            }
-
-            cache = new UTorrentTorrentCache
-            {
-                CacheID = response.CacheNumber,
-                Torrents = torrents
-            };
-
-            _torrentCache.Set(cacheKey, cache, TimeSpan.FromMinutes(15));
-
-            return torrents;
-        }
+        public override bool SupportsCategories => true;
 
         protected override void Test(List<ValidationFailure> failures)
         {
@@ -157,9 +122,9 @@ namespace NzbDrone.Core.Download.Clients.UTorrent
                 _logger.Error(ex, "Failed to test uTorrent");
 
                 return new NzbDroneValidationFailure("Host", "Unable to connect to uTorrent")
-                       {
-                           DetailedDescription = ex.Message
-                       };
+                {
+                    DetailedDescription = ex.Message
+                };
             }
 
             return null;
@@ -180,7 +145,7 @@ namespace NzbDrone.Core.Download.Clients.UTorrent
             return null;
         }
 
-        protected override string AddFromTorrentLink(ReleaseInfo release, string hash, string torrentLink)
+        protected override string AddFromTorrentLink(TorrentInfo release, string hash, string torrentLink)
         {
             throw new NotImplementedException();
         }

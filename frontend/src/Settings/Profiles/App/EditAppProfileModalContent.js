@@ -40,14 +40,15 @@ class EditAppProfileModalContent extends Component {
       name,
       enableRss,
       enableInteractiveSearch,
-      enableAutomaticSearch
+      enableAutomaticSearch,
+      minimumSeeders
     } = item;
 
     return (
       <ModalContent onModalClose={onModalClose}>
 
         <ModalHeader>
-          {id ? translate('EditAppProfile') : translate('AddAppProfile')}
+          {id ? translate('EditSyncProfile') : translate('AddSyncProfile')}
         </ModalHeader>
 
         <ModalBody>
@@ -98,6 +99,20 @@ class EditAppProfileModalContent extends Component {
 
                   <FormGroup>
                     <FormLabel>
+                      {translate('EnableAutomaticSearch')}
+                    </FormLabel>
+
+                    <FormInputGroup
+                      type={inputTypes.CHECK}
+                      name="enableAutomaticSearch"
+                      {...enableAutomaticSearch}
+                      helpText={translate('EnableAutomaticSearchHelpText')}
+                      onChange={onInputChange}
+                    />
+                  </FormGroup>
+
+                  <FormGroup>
+                    <FormLabel>
                       {translate('EnableInteractiveSearch')}
                     </FormLabel>
 
@@ -112,14 +127,14 @@ class EditAppProfileModalContent extends Component {
 
                   <FormGroup>
                     <FormLabel>
-                      {translate('EnableAutomaticSearch')}
+                      {translate('MinimumSeeders')}
                     </FormLabel>
 
                     <FormInputGroup
-                      type={inputTypes.CHECK}
-                      name="enableAutomaticSearch"
-                      {...enableAutomaticSearch}
-                      helpText={translate('EnableAutomaticSearchHelpText')}
+                      type={inputTypes.NUMBER}
+                      name="minimumSeeders"
+                      {...minimumSeeders}
+                      helpText={translate('MinimumSeedersHelpText')}
                       onChange={onInputChange}
                     />
                   </FormGroup>

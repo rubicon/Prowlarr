@@ -18,7 +18,7 @@ namespace NzbDrone.Core.Download.Clients.DownloadStation
     public class UsenetDownloadStation : UsenetClientBase<DownloadStationSettings>
     {
         protected readonly IDownloadStationInfoProxy _dsInfoProxy;
-        protected readonly IDownloadStationTaskProxy _dsTaskProxy;
+        protected readonly IDownloadStationTaskProxySelector _dsTaskProxySelector;
         protected readonly ISharedFolderResolver _sharedFolderResolver;
         protected readonly ISerialNumberProvider _serialNumberProvider;
         protected readonly IFileStationProxy _fileStationProxy;
@@ -27,34 +27,37 @@ namespace NzbDrone.Core.Download.Clients.DownloadStation
                                      ISerialNumberProvider serialNumberProvider,
                                      IFileStationProxy fileStationProxy,
                                      IDownloadStationInfoProxy dsInfoProxy,
-                                     IDownloadStationTaskProxy dsTaskProxy,
+                                     IDownloadStationTaskProxySelector dsTaskProxySelector,
                                      IHttpClient httpClient,
                                      IConfigService configService,
                                      IDiskProvider diskProvider,
                                      Logger logger)
-        : base(httpClient, configService, diskProvider, logger)
+            : base(httpClient, configService, diskProvider, logger)
         {
             _dsInfoProxy = dsInfoProxy;
-            _dsTaskProxy = dsTaskProxy;
+            _dsTaskProxySelector = dsTaskProxySelector;
             _fileStationProxy = fileStationProxy;
             _sharedFolderResolver = sharedFolderResolver;
             _serialNumberProvider = serialNumberProvider;
         }
 
         public override string Name => "Download Station";
+        public override bool SupportsCategories => false;
 
         public override ProviderMessage Message => new ProviderMessage("Prowlarr is unable to connect to Download Station if 2-Factor Authentication is enabled on your DSM account", ProviderMessageType.Warning);
 
+        private IDownloadStationTaskProxy DsTaskProxy => _dsTaskProxySelector.GetProxy(Settings);
+
         protected IEnumerable<DownloadStationTask> GetTasks()
         {
-            return _dsTaskProxy.GetTasks(Settings).Where(v => v.Type.ToLower() == DownloadStationTaskType.NZB.ToString().ToLower());
+            return DsTaskProxy.GetTasks(Settings).Where(v => v.Type.ToLower() == DownloadStationTaskType.NZB.ToString().ToLower());
         }
 
         protected override string AddFromNzbFile(ReleaseInfo release, string filename, byte[] fileContent)
         {
             var hashedSerialNumber = _serialNumberProvider.GetSerialNumber(Settings);
 
-            _dsTaskProxy.AddTaskFromData(fileContent, filename, GetDownloadDirectory(), Settings);
+            DsTaskProxy.AddTaskFromData(fileContent, filename, GetDownloadDirectory(), Settings);
 
             var items = GetTasks().Where(t => t.Additional.Detail["uri"] == filename);
 
@@ -101,7 +104,7 @@ namespace NzbDrone.Core.Download.Clients.DownloadStation
                 if (downloadDir != null)
                 {
                     var sharedFolder = downloadDir.Split('\\', '/')[0];
-                    var fieldName = Settings.TvDirectory.IsNotNullOrWhiteSpace() ? nameof(Settings.TvDirectory) : nameof(Settings.TvCategory);
+                    var fieldName = Settings.TvDirectory.IsNotNullOrWhiteSpace() ? nameof(Settings.TvDirectory) : nameof(Settings.Category);
 
                     var folderInfo = _fileStationProxy.GetInfoFileOrDirectory($"/{downloadDir}", Settings);
 
@@ -126,6 +129,7 @@ namespace NzbDrone.Core.Download.Clients.DownloadStation
             }
             catch (DownloadClientAuthenticationException ex)
             {
+                // User could not have permission to access to downloadstation
                 _logger.Error(ex, ex.Message);
                 return new NzbDroneValidationFailure(string.Empty, ex.Message);
             }
@@ -177,7 +181,7 @@ namespace NzbDrone.Core.Download.Clients.DownloadStation
 
         protected ValidationFailure ValidateVersion()
         {
-            var info = _dsTaskProxy.GetApiInfo(Settings);
+            var info = DsTaskProxy.GetApiInfo(Settings);
 
             _logger.Debug("Download Station api version information: Min {0} - Max {1}", info.MinVersion, info.MaxVersion);
 
@@ -210,9 +214,8 @@ namespace NzbDrone.Core.Download.Clients.DownloadStation
         protected long GetRemainingSize(DownloadStationTask task)
         {
             var downloadedString = task.Additional.Transfer["size_downloaded"];
-            long downloadedSize;
 
-            if (downloadedString.IsNullOrWhiteSpace() || !long.TryParse(downloadedString, out downloadedSize))
+            if (downloadedString.IsNullOrWhiteSpace() || !long.TryParse(downloadedString, out var downloadedSize))
             {
                 _logger.Debug("Task {0} has invalid size_downloaded: {1}", task.Title, downloadedString);
                 downloadedSize = 0;
@@ -224,9 +227,8 @@ namespace NzbDrone.Core.Download.Clients.DownloadStation
         protected long GetDownloadSpeed(DownloadStationTask task)
         {
             var speedString = task.Additional.Transfer["speed_download"];
-            long downloadSpeed;
 
-            if (speedString.IsNullOrWhiteSpace() || !long.TryParse(speedString, out downloadSpeed))
+            if (speedString.IsNullOrWhiteSpace() || !long.TryParse(speedString, out var downloadSpeed))
             {
                 _logger.Debug("Task {0} has invalid speed_download: {1}", task.Title, speedString);
                 downloadSpeed = 0;
@@ -272,14 +274,15 @@ namespace NzbDrone.Core.Download.Clients.DownloadStation
             {
                 return Settings.TvDirectory.TrimStart('/');
             }
-            else if (Settings.TvCategory.IsNotNullOrWhiteSpace())
-            {
-                var destDir = GetDefaultDir();
 
-                return $"{destDir.TrimEnd('/')}/{Settings.TvCategory}";
+            var destDir = GetDefaultDir();
+
+            if (destDir.IsNotNullOrWhiteSpace() && Settings.Category.IsNotNullOrWhiteSpace())
+            {
+                return $"{destDir.TrimEnd('/')}/{Settings.Category}";
             }
 
-            return null;
+            return destDir.TrimEnd('/');
         }
 
         protected override string AddFromLink(ReleaseInfo release)

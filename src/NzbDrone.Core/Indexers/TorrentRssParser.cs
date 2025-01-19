@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using MonoTorrent;
@@ -9,11 +10,32 @@ namespace NzbDrone.Core.Indexers
 {
     public class TorrentRssParser : RssParser
     {
+        // Use to sum/calculate Peers as Leechers+Seeders
+        public bool CalculatePeersAsSum { get; set; }
+
+        // Use the specified element name to determine the Infohash
+        public string InfoHashElementName { get; set; }
+
         // Parse various seeder/leecher/peers formats in the description element to determine number of seeders.
         public bool ParseSeedersInDescription { get; set; }
 
-        // Use the specified element name to determine the size
+        // Use the specified element name to determine the Peers
+        public string PeersElementName { get; set; }
+
+        // Use the specified element name to determine the Seeds
+        public string SeedsElementName { get; set; }
+
+        // Use the specified element name to determine the Size
         public string SizeElementName { get; set; }
+
+        // Use the specified element name to determine the Magnet link
+        public string MagnetElementName { get; set; }
+
+        // Default size for when release sizes aren't available
+        public double? DefaultReleaseSize { get; set; }
+
+        // Default value for when release seeders aren't available
+        public int? DefaultReleaseSeeders { get; set; }
 
         public TorrentRssParser()
         {
@@ -40,14 +62,28 @@ namespace NzbDrone.Core.Indexers
             result.InfoHash = GetInfoHash(item);
             result.MagnetUrl = GetMagnetUrl(item);
             result.Seeders = GetSeeders(item);
-            result.Peers = GetPeers(item);
+
+            if (CalculatePeersAsSum)
+            {
+                result.Peers = GetPeers(item) + result.Seeders;
+            }
+            else
+            {
+                result.Peers = GetPeers(item);
+            }
 
             return result;
         }
 
         protected virtual string GetInfoHash(XElement item)
         {
+            if (InfoHashElementName.IsNotNullOrWhiteSpace())
+            {
+                return item.FindDecendants(InfoHashElementName).FirstOrDefault().Value;
+            }
+
             var magnetUrl = GetMagnetUrl(item);
+
             if (magnetUrl.IsNotNullOrWhiteSpace())
             {
                 try
@@ -64,10 +100,21 @@ namespace NzbDrone.Core.Indexers
 
         protected virtual string GetMagnetUrl(XElement item)
         {
-            var downloadUrl = GetDownloadUrl(item);
-            if (downloadUrl.IsNotNullOrWhiteSpace() && downloadUrl.StartsWith("magnet:"))
+            if (MagnetElementName.IsNotNullOrWhiteSpace())
             {
-                return downloadUrl;
+                var magnetURL = item.FindDecendants(MagnetElementName).FirstOrDefault().Value;
+                if (magnetURL.IsNotNullOrWhiteSpace() && magnetURL.StartsWith("magnet:"))
+                {
+                    return magnetURL;
+                }
+            }
+            else
+            {
+                var downloadUrl = GetDownloadUrl(item);
+                if (downloadUrl.IsNotNullOrWhiteSpace() && downloadUrl.StartsWith("magnet:"))
+                {
+                    return downloadUrl;
+                }
             }
 
             return null;
@@ -75,6 +122,8 @@ namespace NzbDrone.Core.Indexers
 
         protected virtual int? GetSeeders(XElement item)
         {
+            // safe to always use the element if it's present (and valid)
+            // fall back to description if ParseSeedersInDescription is enabled
             if (ParseSeedersInDescription && item.Element("description") != null)
             {
                 var matchSeeders = ParseSeedersRegex.Match(item.Element("description").Value);
@@ -93,7 +142,13 @@ namespace NzbDrone.Core.Indexers
                 }
             }
 
-            return null;
+            var seeds = item.FindDecendants(SeedsElementName).SingleOrDefault();
+            if (seeds != null)
+            {
+                return (int)seeds;
+            }
+
+            return DefaultReleaseSeeders;
         }
 
         protected virtual int? GetPeers(XElement item)
@@ -116,7 +171,13 @@ namespace NzbDrone.Core.Indexers
                 }
             }
 
-            return null;
+            if (PeersElementName.IsNotNullOrWhiteSpace())
+            {
+                var itempeers = item.FindDecendants(PeersElementName).SingleOrDefault();
+                return int.Parse(itempeers.Value);
+            }
+
+            return DefaultReleaseSeeders;
         }
 
         protected override long GetSize(XElement item)
@@ -124,10 +185,16 @@ namespace NzbDrone.Core.Indexers
             var size = base.GetSize(item);
             if (size == 0 && SizeElementName.IsNotNullOrWhiteSpace())
             {
-                if (item.Element(SizeElementName) != null)
+                var itemsize = item.FindDecendants(SizeElementName).SingleOrDefault();
+                if (itemsize != null)
                 {
-                    size = ParseSize(item.Element(SizeElementName).Value, true);
+                    size = ParseSize(itemsize.Value, true);
                 }
+            }
+
+            if (size == 0 && DefaultReleaseSize is > 0)
+            {
+                return (long)(DefaultReleaseSize * 1024f * 1024f);
             }
 
             return size;

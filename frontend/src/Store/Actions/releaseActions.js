@@ -1,6 +1,9 @@
+import $ from 'jquery';
+import React from 'react';
 import { createAction } from 'redux-actions';
 import { batchActions } from 'redux-batched-actions';
-import { filterBuilderTypes, filterBuilderValueTypes, sortDirections } from 'Helpers/Props';
+import Icon from 'Components/Icon';
+import { filterBuilderTypes, filterBuilderValueTypes, filterTypePredicates, icons, sortDirections } from 'Helpers/Props';
 import { createThunk, handleThunks } from 'Store/thunks';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
 import getSectionState from 'Utilities/State/getSectionState';
@@ -30,16 +33,18 @@ export const defaultState = {
   error: null,
   grabError: null,
   items: [],
-  sortKey: 'title',
+  sortKey: 'age',
   sortDirection: sortDirections.ASCENDING,
-  secondarySortKey: 'title',
+  secondarySortKey: 'sortTitle',
   secondarySortDirection: sortDirections.ASCENDING,
 
   defaults: {
     searchType: 'search',
     searchQuery: '',
     searchIndexerIds: [],
-    searchCategories: []
+    searchCategories: [],
+    searchLimit: 100,
+    searchOffset: 0
   },
 
   columns: [
@@ -53,67 +58,71 @@ export const defaultState = {
     },
     {
       name: 'protocol',
-      label: translate('Protocol'),
+      label: () => translate('Protocol'),
       isSortable: true,
       isVisible: true
     },
     {
       name: 'age',
-      label: translate('Age'),
+      label: () => translate('Age'),
       isSortable: true,
       isVisible: true
     },
     {
-      name: 'title',
-      label: translate('Title'),
+      name: 'sortTitle',
+      label: () => translate('Title'),
       isSortable: true,
       isVisible: true
     },
     {
       name: 'indexer',
-      label: translate('Indexer'),
+      label: () => translate('Indexer'),
       isSortable: true,
       isVisible: true
     },
     {
       name: 'size',
-      label: translate('Size'),
+      label: () => translate('Size'),
       isSortable: true,
       isVisible: true
     },
     {
       name: 'files',
-      label: translate('Files'),
+      label: () => translate('Files'),
       isSortable: true,
       isVisible: false
     },
     {
       name: 'grabs',
-      label: translate('Grabs'),
+      label: () => translate('Grabs'),
       isSortable: true,
       isVisible: true
     },
     {
       name: 'peers',
-      label: translate('Peers'),
+      label: () => translate('Peers'),
       isSortable: true,
       isVisible: true
     },
     {
       name: 'category',
-      label: translate('Category'),
+      label: () => translate('Category'),
       isSortable: true,
       isVisible: true
     },
     {
       name: 'indexerFlags',
-      columnLabel: 'Indexer Flags',
+      columnLabel: () => translate('IndexerFlags'),
+      label: React.createElement(Icon, {
+        name: icons.FLAG,
+        title: () => translate('IndexerFlags')
+      }),
       isSortable: true,
       isVisible: true
     },
     {
       name: 'actions',
-      columnLabel: translate('Actions'),
+      columnLabel: () => translate('Actions'),
       isVisible: true,
       isModifiable: false
     }
@@ -143,7 +152,7 @@ export const defaultState = {
     },
 
     category: function(item) {
-      if (item.categories.length > 0) {
+      if (item.categories !== undefined && item.categories.length > 0) {
         const sortedCats = item.categories.filter((cat) => cat.name !== undefined).sort((c) => c.id);
         const firstCat = sortedCats[0];
 
@@ -155,57 +164,70 @@ export const defaultState = {
   filters: [
     {
       key: 'all',
-      label: translate('All'),
+      label: () => translate('All'),
       filters: []
     }
   ],
 
+  filterPredicates: {
+    peers: function(item, filterValue, type) {
+      const predicate = filterTypePredicates[type];
+
+      const seeders = item.seeders || 0;
+      const leechers = item.leechers || 0;
+      const peers = seeders + leechers;
+
+      return predicate(peers, filterValue);
+    }
+  },
+
   filterBuilderProps: [
     {
       name: 'title',
-      label: translate('Title'),
+      label: () => translate('Title'),
       type: filterBuilderTypes.STRING
     },
     {
       name: 'age',
-      label: translate('Age'),
+      label: () => translate('Age'),
       type: filterBuilderTypes.NUMBER
     },
     {
       name: 'protocol',
-      label: translate('Protocol'),
+      label: () => translate('Protocol'),
       type: filterBuilderTypes.EXACT,
       valueType: filterBuilderValueTypes.PROTOCOL
     },
     {
       name: 'indexerId',
-      label: translate('Indexer'),
+      label: () => translate('Indexer'),
       type: filterBuilderTypes.EXACT,
       valueType: filterBuilderValueTypes.INDEXER
     },
     {
       name: 'size',
-      label: translate('Size'),
-      type: filterBuilderTypes.NUMBER
+      label: () => translate('Size'),
+      type: filterBuilderTypes.NUMBER,
+      valueType: filterBuilderValueTypes.BYTES
     },
     {
       name: 'files',
-      label: translate('Files'),
+      label: () => translate('Files'),
       type: filterBuilderTypes.NUMBER
     },
     {
       name: 'grabs',
-      label: translate('Grabs'),
+      label: () => translate('Grabs'),
       type: filterBuilderTypes.NUMBER
     },
     {
       name: 'seeders',
-      label: translate('Seeders'),
+      label: () => translate('Seeders'),
       type: filterBuilderTypes.NUMBER
     },
     {
       name: 'peers',
-      label: translate('Peers'),
+      label: () => translate('Peers'),
       type: filterBuilderTypes.NUMBER
     }
   ],
@@ -229,6 +251,7 @@ export const CANCEL_FETCH_RELEASES = 'releases/cancelFetchReleases';
 export const SET_RELEASES_SORT = 'releases/setReleasesSort';
 export const CLEAR_RELEASES = 'releases/clearReleases';
 export const GRAB_RELEASE = 'releases/grabRelease';
+export const SAVE_RELEASE = 'releases/saveRelease';
 export const BULK_GRAB_RELEASES = 'release/bulkGrabReleases';
 export const UPDATE_RELEASE = 'releases/updateRelease';
 export const SET_RELEASES_FILTER = 'releases/setReleasesFilter';
@@ -243,6 +266,7 @@ export const cancelFetchReleases = createThunk(CANCEL_FETCH_RELEASES);
 export const setReleasesSort = createAction(SET_RELEASES_SORT);
 export const clearReleases = createAction(CLEAR_RELEASES);
 export const grabRelease = createThunk(GRAB_RELEASE);
+export const saveRelease = createThunk(SAVE_RELEASE);
 export const bulkGrabReleases = createThunk(BULK_GRAB_RELEASES);
 export const updateRelease = createAction(UPDATE_RELEASE);
 export const setReleasesFilter = createAction(SET_RELEASES_FILTER);
@@ -304,13 +328,37 @@ export const actionHandlers = handleThunks({
     });
   },
 
+  [SAVE_RELEASE]: function(getState, payload, dispatch) {
+    const link = payload.downloadUrl;
+    const file = payload.fileName;
+
+    $.ajax({
+      url: link,
+      method: 'GET',
+      headers: {
+        'X-Prowlarr-Client': true
+      },
+      xhrFields: {
+        responseType: 'blob'
+      },
+      success: function(data) {
+        const a = document.createElement('a');
+        const url = window.URL.createObjectURL(data);
+        a.href = url;
+        a.download = file;
+        document.body.append(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
+      }
+    });
+  },
+
   [BULK_GRAB_RELEASES]: function(getState, payload, dispatch) {
     dispatch(set({
       section,
       isGrabbing: true
     }));
-
-    console.log(payload);
 
     const promise = createAjaxRequest({
       url: '/search/bulk',
@@ -321,8 +369,9 @@ export const actionHandlers = handleThunks({
 
     promise.done((data) => {
       dispatch(batchActions([
-        ...data.map((release) => {
+        ...data.map(({ guid }) => {
           return updateRelease({
+            guid,
             isGrabbing: false,
             isGrabbed: true,
             grabError: null
@@ -352,7 +401,16 @@ export const actionHandlers = handleThunks({
 export const reducers = createHandleActions({
 
   [CLEAR_RELEASES]: (state) => {
-    return Object.assign({}, state, defaultState);
+    const {
+      sortKey,
+      sortDirection,
+      customFilters,
+      selectedFilterKey,
+      columns,
+      ...otherDefaultState
+    } = defaultState;
+
+    return Object.assign({}, state, otherDefaultState);
   },
 
   [UPDATE_RELEASE]: (state, { payload }) => {

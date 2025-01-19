@@ -26,6 +26,8 @@ namespace Prowlarr.Api.V1.Commands
         private readonly Debouncer _debouncer;
         private readonly Dictionary<int, CommandResource> _pendingUpdates;
 
+        private readonly CommandPriorityComparer _commandPriorityComparer = new CommandPriorityComparer();
+
         public CommandController(IManageCommandQueue commandQueueManager,
                              IBroadcastSignalRMessage signalRBroadcaster,
                              KnownTypes knownTypes)
@@ -46,8 +48,9 @@ namespace Prowlarr.Api.V1.Commands
         }
 
         [RestPostById]
+        [Consumes("application/json")]
         [Produces("application/json")]
-        public ActionResult<CommandResource> StartCommand(CommandResource commandResource)
+        public ActionResult<CommandResource> StartCommand([FromBody] CommandResource commandResource)
         {
             var commandType =
                 _knownTypes.GetImplementations(typeof(Command))
@@ -58,9 +61,8 @@ namespace Prowlarr.Api.V1.Commands
             using var reader = new StreamReader(Request.Body);
             var body = reader.ReadToEnd();
 
-            dynamic command = STJson.Deserialize(body, commandType);
+            var command = STJson.Deserialize(body, commandType) as Command;
 
-            command.Trigger = CommandTrigger.Manual;
             command.SuppressMessages = !command.SendUpdatesToClient;
             command.SendUpdatesToClient = true;
             command.ClientUserAgent = Request.Headers["User-Agent"];
@@ -73,7 +75,10 @@ namespace Prowlarr.Api.V1.Commands
         [Produces("application/json")]
         public List<CommandResource> GetStartedCommands()
         {
-            return _commandQueueManager.All().ToResource();
+            return _commandQueueManager.All()
+                .OrderBy(c => c.Status, _commandPriorityComparer)
+                .ThenByDescending(c => c.Priority)
+                .ToResource();
         }
 
         [RestDeleteById]
@@ -107,7 +112,7 @@ namespace Prowlarr.Api.V1.Commands
                 {
                     BroadcastResourceChange(ModelAction.Updated, pendingUpdate);
 
-                    if (pendingUpdate.Name == typeof(MessagingCleanupCommand).Name.Replace("Command", "") &&
+                    if (pendingUpdate.Name == nameof(MessagingCleanupCommand).Replace("Command", "") &&
                         pendingUpdate.Status == CommandStatus.Completed)
                     {
                         BroadcastResourceChange(ModelAction.Sync);

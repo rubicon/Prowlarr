@@ -1,10 +1,11 @@
 using FluentValidation;
 using NzbDrone.Core.Annotations;
+using NzbDrone.Core.Indexers.Settings;
 using NzbDrone.Core.Validation;
 
 namespace NzbDrone.Core.Indexers.Definitions.Avistaz
 {
-    public class AvistazSettingsValidator : AbstractValidator<AvistazSettings>
+    public class AvistazSettingsValidator : NoAuthSettingsValidator<AvistazSettings>
     {
         public AvistazSettingsValidator()
         {
@@ -14,33 +15,31 @@ namespace NzbDrone.Core.Indexers.Definitions.Avistaz
         }
     }
 
-    public class AvistazSettings : IIndexerSettings
+    public class AvistazSettings : NoAuthTorrentBaseSettings
     {
-        private static readonly AvistazSettingsValidator Validator = new AvistazSettingsValidator();
+        private static readonly AvistazSettingsValidator Validator = new ();
 
         public AvistazSettings()
         {
             Token = "";
+            FreeleechOnly = false;
         }
 
         public string Token { get; set; }
 
-        [FieldDefinition(1, Label = "Base Url", Type = FieldType.Select, SelectOptionsProviderAction = "getUrls", HelpText = "Select which baseurl Prowlarr will use for requests to the site")]
-        public string BaseUrl { get; set; }
-
-        [FieldDefinition(2, Label = "Username", HelpText = "Site Username", Privacy = PrivacyLevel.UserName)]
+        [FieldDefinition(2, Label = "Username", HelpText = "IndexerAvistazSettingsUsernameHelpText", HelpTextWarning = "IndexerAvistazSettingsUsernameHelpTextWarning", Privacy = PrivacyLevel.UserName)]
         public string Username { get; set; }
 
-        [FieldDefinition(3, Label = "Password", HelpText = "Site Password", Privacy = PrivacyLevel.Password, Type = FieldType.Password)]
+        [FieldDefinition(3, Label = "Password", HelpText = "IndexerAvistazSettingsPasswordHelpText", Privacy = PrivacyLevel.Password, Type = FieldType.Password)]
         public string Password { get; set; }
 
-        [FieldDefinition(4, Label = "PID", HelpText = "PID from My Account or My Profile page")]
+        [FieldDefinition(4, Label = "PID", HelpText = "IndexerAvistazSettingsPidHelpText", Privacy = PrivacyLevel.Password, Type = FieldType.Password)]
         public string Pid { get; set; }
 
-        [FieldDefinition(5)]
-        public IndexerBaseSettings BaseSettings { get; set; } = new IndexerBaseSettings();
+        [FieldDefinition(5, Label = "IndexerSettingsFreeleechOnly", Type = FieldType.Checkbox, HelpText = "IndexerAvistazSettingsFreeleechOnlyHelpText")]
+        public bool FreeleechOnly { get; set; }
 
-        public NzbDroneValidationResult Validate()
+        public override NzbDroneValidationResult Validate()
         {
             return new NzbDroneValidationResult(Validator.Validate(this));
         }

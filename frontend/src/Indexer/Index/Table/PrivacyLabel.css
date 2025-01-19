@@ -1,0 +1,20 @@
+.publicLabel {
+  composes: label from '~Components/Label.css';
+
+  border-color: var(--dangerColor);
+  background-color: var(--dangerColor);
+}
+
+.semiPrivateLabel {
+  composes: label from '~Components/Label.css';
+
+  border-color: var(--warningColor);
+  background-color: var(--warningColor);
+}
+
+.privateLabel {
+  composes: label from '~Components/Label.css';
+
+  border-color: var(--infoColor);
+  background-color: var(--infoColor);
+}

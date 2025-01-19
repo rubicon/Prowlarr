@@ -1,14 +1,19 @@
+// eslint-disable @typescript-eslint/no-var-requires
 const fs = require('fs');
+const path = require('path');
+const typescriptEslintRecommended = require('@typescript-eslint/eslint-plugin').configs.recommended;
+
+const frontendFolder = __dirname;
 
 const dirs = fs
-  .readdirSync('frontend/src', { withFileTypes: true })
+  .readdirSync(path.join(frontendFolder, 'src'), { withFileTypes: true })
   .filter((dirent) => dirent.isDirectory())
   .map((dirent) => dirent.name)
   .join('|');
 
-const frontendFolder = __dirname;
-
 module.exports = {
+  root: true,
+
   parser: '@babel/eslint-parser',
 
   env: {
@@ -21,7 +26,8 @@ module.exports = {
   globals: {
     expect: false,
     chai: false,
-    sinon: false
+    sinon: false,
+    JSX: true
   },
 
   parserOptions: {
@@ -39,8 +45,11 @@ module.exports = {
   plugins: [
     'filenames',
     'react',
+    'react-hooks',
     'simple-import-sort',
-    'import'
+    'import',
+    '@typescript-eslint',
+    'prettier'
   ],
 
   settings: {
@@ -223,7 +232,7 @@ module.exports = {
     'consistent-this': ['error', 'self'],
     'eol-last': 'error',
     'func-names': 'off',
-    'func-style': ['error', 'declaration'],
+    'func-style': ['error', 'declaration', { allowArrowFunctions: true }],
     indent: ['error', 2, { SwitchCase: 1 }],
     'key-spacing': ['error', { beforeColon: false, afterColon: true }],
     'keyword-spacing': ['error', { before: true, after: true }],
@@ -308,11 +317,15 @@ module.exports = {
     'react/react-in-jsx-scope': 2,
     'react/self-closing-comp': 2,
     'react/sort-comp': 2,
-    'react/jsx-wrap-multilines': 2
+    'react/jsx-wrap-multilines': 2,
+    'react-hooks/rules-of-hooks': 'error',
+    'react-hooks/exhaustive-deps': 'error'
   },
   overrides: [
     {
-      files: ['*.js'],
+      files: [
+        '*.js'
+      ],
       rules: {
         'simple-import-sort/imports': [
           'error',
@@ -326,6 +339,91 @@ module.exports = {
             ]
           }
         ]
+      }
+    },
+    {
+      files: [
+        '*.ts',
+        '*.tsx'
+      ],
+
+      parser: '@typescript-eslint/parser',
+      parserOptions: {
+        project: './tsconfig.json'
+      },
+
+      extends: [
+        'prettier'
+      ],
+
+      rules: Object.assign(typescriptEslintRecommended.rules, {
+        '@typescript-eslint/no-unused-vars': [
+          'error',
+          {
+            args: 'after-used',
+            argsIgnorePattern: '^_',
+            ignoreRestSiblings: true
+          }
+        ],
+        '@typescript-eslint/explicit-function-return-type': 'off',
+        'no-shadow': 'off',
+        'prettier/prettier': 'error',
+        'simple-import-sort/imports': [
+          'error',
+          {
+            groups: [
+              // Packages
+              // Absolute Paths
+              // Relative Paths
+              // Css
+              ['^@?\\w', `^(${dirs})(/.*|$)`, '^\\.', '^\\..*css$']
+            ]
+          }
+        ],
+
+        // React Hooks
+        'react-hooks/rules-of-hooks': 'error',
+        'react-hooks/exhaustive-deps': 'error',
+
+        // React
+        'react/function-component-definition': 'error',
+        'react/hook-use-state': 'error',
+        'react/jsx-boolean-value': ['error', 'always'],
+        'react/jsx-curly-brace-presence': [
+          'error',
+          { props: 'never', children: 'never' }
+        ],
+        'react/jsx-fragments': 'error',
+        'react/jsx-handler-names': [
+          'error',
+          {
+            eventHandlerPrefix: 'on',
+            eventHandlerPropPrefix: 'on'
+          }
+        ],
+        'react/jsx-no-bind': ['error', { ignoreRefs: true }],
+        'react/jsx-no-useless-fragment': ['error', { allowExpressions: true }],
+        'react/jsx-pascal-case': ['error', { allowAllCaps: true }],
+        'react/jsx-sort-props': [
+          'error',
+          {
+            callbacksLast: true,
+            noSortAlphabetically: true,
+            reservedFirst: true
+          }
+        ],
+        'react/prop-types': 'off',
+        'react/self-closing-comp': 'error'
+      })
+    },
+    {
+      files: [
+        '*.css.d.ts'
+      ],
+      rules: {
+        'filenames/match-exported': 'off',
+        'init-declarations': 'off',
+        'prettier/prettier': 'off'
       }
     }
   ]

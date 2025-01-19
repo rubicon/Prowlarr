@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using System.Net;
+using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
 using FluentAssertions;
@@ -9,7 +10,7 @@ using NUnit.Framework;
 using NzbDrone.Common.Http;
 using NzbDrone.Common.Serializer;
 using NzbDrone.Core.Indexers;
-using NzbDrone.Core.Indexers.HDBits;
+using NzbDrone.Core.Indexers.Definitions.HDBits;
 using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Test.Framework;
@@ -45,7 +46,7 @@ namespace NzbDrone.Core.Test.IndexerTests.HDBitsTests
             var responseJson = ReadAllText(fileName);
 
             Mocker.GetMock<IIndexerHttpClient>()
-                .Setup(o => o.ExecuteProxiedAsync(It.Is<HttpRequest>(v => v.Method == HttpMethod.POST), Subject.Definition))
+                .Setup(o => o.ExecuteProxiedAsync(It.Is<HttpRequest>(v => v.Method == HttpMethod.Post), Subject.Definition))
                 .Returns<HttpRequest, IndexerDefinition>((r, d) => Task.FromResult(new HttpResponse(r, new HttpHeader(), new CookieCollection(), responseJson)));
 
             var torrents = (await Subject.Fetch(_movieSearchCriteria)).Releases;
@@ -56,7 +57,7 @@ namespace NzbDrone.Core.Test.IndexerTests.HDBitsTests
             var first = torrents.First() as TorrentInfo;
 
             first.Guid.Should().Be("HDBits-257142");
-            first.Title.Should().Be("Supernatural S10E17 1080p WEB-DL DD5.1 H.264-ECI");
+            first.Title.Should().Be("Supernatural.S10E17.1080p.WEB-DL.DD5.1.H.264-ECI");
             first.DownloadProtocol.Should().Be(DownloadProtocol.Torrent);
             first.DownloadUrl.Should().Be("https://hdbits.org/download.php?id=257142&passkey=fakekey");
             first.InfoUrl.Should().Be("https://hdbits.org/details.php?id=257142");

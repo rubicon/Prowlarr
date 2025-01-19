@@ -7,9 +7,9 @@ using FluentValidation.Results;
 using NLog;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.Extensions;
-using NzbDrone.Common.Http;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Download.Clients.DownloadStation.Proxies;
+using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.ThingiProvider;
 using NzbDrone.Core.Validation;
@@ -19,7 +19,7 @@ namespace NzbDrone.Core.Download.Clients.DownloadStation
     public class TorrentDownloadStation : TorrentClientBase<DownloadStationSettings>
     {
         protected readonly IDownloadStationInfoProxy _dsInfoProxy;
-        protected readonly IDownloadStationTaskProxy _dsTaskProxy;
+        protected readonly IDownloadStationTaskProxySelector _dsTaskProxySelector;
         protected readonly ISharedFolderResolver _sharedFolderResolver;
         protected readonly ISerialNumberProvider _serialNumberProvider;
         protected readonly IFileStationProxy _fileStationProxy;
@@ -28,35 +28,38 @@ namespace NzbDrone.Core.Download.Clients.DownloadStation
                                       ISerialNumberProvider serialNumberProvider,
                                       IFileStationProxy fileStationProxy,
                                       IDownloadStationInfoProxy dsInfoProxy,
-                                      IDownloadStationTaskProxy dsTaskProxy,
+                                      IDownloadStationTaskProxySelector dsTaskProxySelector,
                                       ITorrentFileInfoReader torrentFileInfoReader,
-                                      IHttpClient httpClient,
+                                      ISeedConfigProvider seedConfigProvider,
                                       IConfigService configService,
                                       IDiskProvider diskProvider,
                                       Logger logger)
-            : base(torrentFileInfoReader, httpClient, configService, diskProvider, logger)
+            : base(torrentFileInfoReader, seedConfigProvider, configService, diskProvider, logger)
         {
             _dsInfoProxy = dsInfoProxy;
-            _dsTaskProxy = dsTaskProxy;
+            _dsTaskProxySelector = dsTaskProxySelector;
             _fileStationProxy = fileStationProxy;
             _sharedFolderResolver = sharedFolderResolver;
             _serialNumberProvider = serialNumberProvider;
         }
 
         public override string Name => "Download Station";
+        public override bool SupportsCategories => false;
 
         public override ProviderMessage Message => new ProviderMessage("Prowlarr is unable to connect to Download Station if 2-Factor Authentication is enabled on your DSM account", ProviderMessageType.Warning);
 
+        private IDownloadStationTaskProxy DsTaskProxy => _dsTaskProxySelector.GetProxy(Settings);
+
         protected IEnumerable<DownloadStationTask> GetTasks()
         {
-            return _dsTaskProxy.GetTasks(Settings).Where(v => v.Type.ToLower() == DownloadStationTaskType.BT.ToString().ToLower());
+            return DsTaskProxy.GetTasks(Settings).Where(v => v.Type.ToLower() == DownloadStationTaskType.BT.ToString().ToLower());
         }
 
-        protected override string AddFromMagnetLink(ReleaseInfo release, string hash, string magnetLink)
+        protected override string AddFromMagnetLink(TorrentInfo release, string hash, string magnetLink)
         {
             var hashedSerialNumber = _serialNumberProvider.GetSerialNumber(Settings);
 
-            _dsTaskProxy.AddTaskFromUrl(magnetLink, GetDownloadDirectory(), Settings);
+            DsTaskProxy.AddTaskFromUrl(magnetLink, GetDownloadDirectory(), Settings);
 
             var item = GetTasks().SingleOrDefault(t => t.Additional.Detail["uri"] == magnetLink);
 
@@ -71,11 +74,11 @@ namespace NzbDrone.Core.Download.Clients.DownloadStation
             throw new DownloadClientException("Failed to add magnet task to Download Station");
         }
 
-        protected override string AddFromTorrentFile(ReleaseInfo release, string hash, string filename, byte[] fileContent)
+        protected override string AddFromTorrentFile(TorrentInfo release, string hash, string filename, byte[] fileContent)
         {
             var hashedSerialNumber = _serialNumberProvider.GetSerialNumber(Settings);
 
-            _dsTaskProxy.AddTaskFromData(fileContent, filename, GetDownloadDirectory(), Settings);
+            DsTaskProxy.AddTaskFromData(fileContent, filename, GetDownloadDirectory(), Settings);
 
             var items = GetTasks().Where(t => t.Additional.Detail["uri"] == Path.GetFileNameWithoutExtension(filename));
 
@@ -108,11 +111,6 @@ namespace NzbDrone.Core.Download.Clients.DownloadStation
             return torrent.Status == DownloadStationTaskStatus.Finished;
         }
 
-        protected bool IsCompleted(DownloadStationTask torrent)
-        {
-            return torrent.Status == DownloadStationTaskStatus.Seeding || IsFinished(torrent) || (torrent.Status == DownloadStationTaskStatus.Waiting && torrent.Size != 0 && GetRemainingSize(torrent) <= 0);
-        }
-
         protected string GetMessage(DownloadStationTask torrent)
         {
             if (torrent.StatusExtra != null)
@@ -134,9 +132,8 @@ namespace NzbDrone.Core.Download.Clients.DownloadStation
         protected long GetRemainingSize(DownloadStationTask torrent)
         {
             var downloadedString = torrent.Additional.Transfer["size_downloaded"];
-            long downloadedSize;
 
-            if (downloadedString.IsNullOrWhiteSpace() || !long.TryParse(downloadedString, out downloadedSize))
+            if (downloadedString.IsNullOrWhiteSpace() || !long.TryParse(downloadedString, out var downloadedSize))
             {
                 _logger.Debug("Torrent {0} has invalid size_downloaded: {1}", torrent.Title, downloadedString);
                 downloadedSize = 0;
@@ -148,9 +145,8 @@ namespace NzbDrone.Core.Download.Clients.DownloadStation
         protected TimeSpan? GetRemainingTime(DownloadStationTask torrent)
         {
             var speedString = torrent.Additional.Transfer["speed_download"];
-            long downloadSpeed;
 
-            if (speedString.IsNullOrWhiteSpace() || !long.TryParse(speedString, out downloadSpeed))
+            if (speedString.IsNullOrWhiteSpace() || !long.TryParse(speedString, out var downloadSpeed))
             {
                 _logger.Debug("Torrent {0} has invalid speed_download: {1}", torrent.Title, speedString);
                 downloadSpeed = 0;
@@ -198,7 +194,7 @@ namespace NzbDrone.Core.Download.Clients.DownloadStation
                 if (downloadDir != null)
                 {
                     var sharedFolder = downloadDir.Split('\\', '/')[0];
-                    var fieldName = Settings.TvDirectory.IsNotNullOrWhiteSpace() ? nameof(Settings.TvDirectory) : nameof(Settings.TvCategory);
+                    var fieldName = Settings.TvDirectory.IsNotNullOrWhiteSpace() ? nameof(Settings.TvDirectory) : nameof(Settings.Category);
 
                     var folderInfo = _fileStationProxy.GetInfoFileOrDirectory($"/{downloadDir}", Settings);
 
@@ -223,6 +219,7 @@ namespace NzbDrone.Core.Download.Clients.DownloadStation
             }
             catch (DownloadClientAuthenticationException ex)
             {
+                // User could not have permission to access to downloadstation
                 _logger.Error(ex, ex.Message);
                 return new NzbDroneValidationFailure(string.Empty, ex.Message);
             }
@@ -274,7 +271,7 @@ namespace NzbDrone.Core.Download.Clients.DownloadStation
 
         protected ValidationFailure ValidateVersion()
         {
-            var info = _dsTaskProxy.GetApiInfo(Settings);
+            var info = DsTaskProxy.GetApiInfo(Settings);
 
             _logger.Debug("Download Station api version information: Min {0} - Max {1}", info.MinVersion, info.MaxVersion);
 
@@ -311,17 +308,18 @@ namespace NzbDrone.Core.Download.Clients.DownloadStation
             {
                 return Settings.TvDirectory.TrimStart('/');
             }
-            else if (Settings.TvCategory.IsNotNullOrWhiteSpace())
-            {
-                var destDir = GetDefaultDir();
 
-                return $"{destDir.TrimEnd('/')}/{Settings.TvCategory}";
+            var destDir = GetDefaultDir();
+
+            if (destDir.IsNotNullOrWhiteSpace() && Settings.Category.IsNotNullOrWhiteSpace())
+            {
+                return $"{destDir.TrimEnd('/')}/{Settings.Category}";
             }
 
-            return null;
+            return destDir.TrimEnd('/');
         }
 
-        protected override string AddFromTorrentLink(ReleaseInfo release, string hash, string torrentLink)
+        protected override string AddFromTorrentLink(TorrentInfo release, string hash, string torrentLink)
         {
             throw new NotImplementedException();
         }

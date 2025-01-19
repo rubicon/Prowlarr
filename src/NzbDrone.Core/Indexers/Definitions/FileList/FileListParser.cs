@@ -1,96 +1,117 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
 using System.Net;
-using Newtonsoft.Json;
 using NzbDrone.Common.Http;
+using NzbDrone.Common.Serializer;
 using NzbDrone.Core.Indexers.Exceptions;
 using NzbDrone.Core.Parser.Model;
 
-namespace NzbDrone.Core.Indexers.FileList
+namespace NzbDrone.Core.Indexers.Definitions.FileList;
+
+public class FileListParser : IParseIndexerResponse
 {
-    public class FileListParser : IParseIndexerResponse
+    private readonly FileListSettings _settings;
+    private readonly IndexerCapabilitiesCategories _categories;
+
+    public FileListParser(FileListSettings settings, IndexerCapabilitiesCategories categories)
     {
-        private readonly FileListSettings _settings;
-        private readonly IndexerCapabilitiesCategories _categories;
+        _settings = settings;
+        _categories = categories;
+    }
 
-        public FileListParser(FileListSettings settings, IndexerCapabilitiesCategories categories)
+    public IList<ReleaseInfo> ParseResponse(IndexerResponse indexerResponse)
+    {
+        if (indexerResponse.HttpResponse.StatusCode != HttpStatusCode.OK)
         {
-            _settings = settings;
-            _categories = categories;
+            throw new IndexerException(indexerResponse, "Unexpected response status {0} code from indexer request", indexerResponse.HttpResponse.StatusCode);
         }
 
-        public IList<ReleaseInfo> ParseResponse(IndexerResponse indexerResponse)
+        if (indexerResponse.Content.StartsWith("{\"error\"") && STJson.TryDeserialize<FileListErrorResponse>(indexerResponse.Content, out var errorResponse))
         {
-            var torrentInfos = new List<ReleaseInfo>();
+            throw new IndexerException(indexerResponse, "Unexpected response from indexer request: {0}", errorResponse.Error);
+        }
 
-            if (indexerResponse.HttpResponse.StatusCode != HttpStatusCode.OK)
+        if (!indexerResponse.HttpResponse.Headers.ContentType.Contains(HttpAccept.Json.Value))
+        {
+            throw new IndexerException(indexerResponse, "Unexpected response header {0} from indexer request, expected {1}", indexerResponse.HttpResponse.Headers.ContentType, HttpAccept.Json.Value);
+        }
+
+        var releaseInfos = new List<ReleaseInfo>();
+
+        var results = STJson.Deserialize<List<FileListTorrent>>(indexerResponse.Content);
+
+        foreach (var row in results)
+        {
+            // skip non-freeleech results when freeleech only is set
+            if (_settings.FreeleechOnly && !row.FreeLeech)
             {
-                throw new IndexerException(indexerResponse,
-                    "Unexpected response status {0} code from API request",
-                    indexerResponse.HttpResponse.StatusCode);
+                continue;
             }
 
-            var queryResults = JsonConvert.DeserializeObject<List<FileListTorrent>>(indexerResponse.Content);
+            var id = row.Id;
 
-            foreach (var result in queryResults)
+            var flags = new HashSet<IndexerFlag>();
+            if (row.Internal)
             {
-                var id = result.Id;
-
-                var flags = new List<IndexerFlag>();
-
-                var imdbId = 0;
-                if (result.ImdbId != null && result.ImdbId.Length > 2)
-                {
-                    imdbId = int.Parse(result.ImdbId.Substring(2));
-                }
-
-                var downloadVolumeFactor = result.FreeLeech == true ? 0 : 1;
-                var uploadVolumeFactor = result.DoubleUp == true ? 2 : 1;
-
-                torrentInfos.Add(new TorrentInfo()
-                {
-                    Guid = string.Format("FileList-{0}", id),
-                    Title = result.Name,
-                    Size = result.Size,
-                    Categories = _categories.MapTrackerCatDescToNewznab(result.Category),
-                    DownloadUrl = GetDownloadUrl(id),
-                    InfoUrl = GetInfoUrl(id),
-                    Seeders = result.Seeders,
-                    Peers = result.Leechers + result.Seeders,
-                    PublishDate = result.UploadDate,
-                    ImdbId = imdbId,
-                    IndexerFlags = flags,
-                    Files = (int)result.Files,
-                    Grabs = (int)result.TimesCompleted,
-                    DownloadVolumeFactor = downloadVolumeFactor,
-                    UploadVolumeFactor = uploadVolumeFactor,
-                    MinimumRatio = 1,
-                    MinimumSeedTime = 172800, //48 hours
-                });
+                flags.Add(IndexerFlag.Internal);
             }
 
-            return torrentInfos.ToArray();
+            var imdbId = 0;
+            if (row.ImdbId is { Length: > 2 })
+            {
+                int.TryParse(row.ImdbId.TrimStart('t'), out imdbId);
+            }
+
+            var downloadVolumeFactor = row.FreeLeech ? 0 : 1;
+            var uploadVolumeFactor = row.DoubleUp ? 2 : 1;
+
+            releaseInfos.Add(new TorrentInfo
+            {
+                Guid = $"FileList-{id}",
+                Title = row.Name,
+                Size = row.Size,
+                Categories = _categories.MapTrackerCatDescToNewznab(row.Category),
+                DownloadUrl = GetDownloadUrl(id),
+                InfoUrl = GetInfoUrl(id),
+                Seeders = row.Seeders,
+                Peers = row.Leechers + row.Seeders,
+                PublishDate = DateTime.Parse(row.UploadDate + " +0200", CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal),
+                Description = row.SmallDescription,
+                Genres = row.SmallDescription.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries).ToList(),
+                ImdbId = imdbId,
+                IndexerFlags = flags,
+                Files = (int)row.Files,
+                Grabs = (int)row.TimesCompleted,
+                DownloadVolumeFactor = downloadVolumeFactor,
+                UploadVolumeFactor = uploadVolumeFactor,
+                MinimumRatio = 1,
+                MinimumSeedTime = 172800, // 48 hours
+            });
         }
 
-        public Action<IDictionary<string, string>, DateTime?> CookiesUpdater { get; set; }
+        return releaseInfos.ToArray();
+    }
 
-        private string GetDownloadUrl(string torrentId)
-        {
-            var url = new HttpUri(_settings.BaseUrl)
-                .CombinePath("/download.php")
-                .AddQueryParam("id", torrentId)
-                .AddQueryParam("passkey", _settings.Passkey);
+    public Action<IDictionary<string, string>, DateTime?> CookiesUpdater { get; set; }
 
-            return url.FullUri;
-        }
+    private string GetDownloadUrl(uint torrentId)
+    {
+        var url = new HttpUri(_settings.BaseUrl)
+            .CombinePath("/download.php")
+            .AddQueryParam("id", torrentId.ToString())
+            .AddQueryParam("passkey", _settings.Passkey);
 
-        private string GetInfoUrl(string torrentId)
-        {
-            var url = new HttpUri(_settings.BaseUrl)
-                .CombinePath("/details.php")
-                .AddQueryParam("id", torrentId);
+        return url.FullUri;
+    }
 
-            return url.FullUri;
-        }
+    private string GetInfoUrl(uint torrentId)
+    {
+        var url = new HttpUri(_settings.BaseUrl)
+            .CombinePath("/details.php")
+            .AddQueryParam("id", torrentId.ToString());
+
+        return url.FullUri;
     }
 }

@@ -97,6 +97,23 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
             return response;
         }
 
+        public bool IsTorrentLoaded(string hash, QBittorrentSettings settings)
+        {
+            var request = BuildRequest(settings).Resource($"/query/propertiesGeneral/{hash}");
+            request.LogHttpError = false;
+
+            try
+            {
+                ProcessRequest(request, settings);
+
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         public QBittorrentTorrentProperties GetTorrentProperties(string hash, QBittorrentSettings settings)
         {
             var request = BuildRequest(settings).Resource($"/query/propertiesGeneral/{hash}");
@@ -113,15 +130,15 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
             return response;
         }
 
-        public void AddTorrentFromUrl(string torrentUrl, TorrentSeedConfiguration seedConfiguration, QBittorrentSettings settings)
+        public void AddTorrentFromUrl(string torrentUrl, TorrentSeedConfiguration seedConfiguration, QBittorrentSettings settings, string category)
         {
             var request = BuildRequest(settings).Resource("/command/download")
                                                 .Post()
                                                 .AddFormParameter("urls", torrentUrl);
 
-            if (settings.Category.IsNotNullOrWhiteSpace())
+            if (category.IsNotNullOrWhiteSpace())
             {
-                request.AddFormParameter("category", settings.Category);
+                request.AddFormParameter("category", category);
             }
 
             // Note: ForceStart is handled by separate api call
@@ -129,7 +146,7 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
             {
                 request.AddFormParameter("paused", false);
             }
-            else if ((QBittorrentState)settings.InitialState == QBittorrentState.Pause)
+            else if ((QBittorrentState)settings.InitialState == QBittorrentState.Stop)
             {
                 request.AddFormParameter("paused", true);
             }
@@ -143,15 +160,15 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
             }
         }
 
-        public void AddTorrentFromFile(string fileName, byte[] fileContent, TorrentSeedConfiguration seedConfiguration, QBittorrentSettings settings)
+        public void AddTorrentFromFile(string fileName, byte[] fileContent, TorrentSeedConfiguration seedConfiguration, QBittorrentSettings settings, string category)
         {
             var request = BuildRequest(settings).Resource("/command/upload")
                                                 .Post()
                                                 .AddFormUpload("torrents", fileName, fileContent);
 
-            if (settings.Category.IsNotNullOrWhiteSpace())
+            if (category.IsNotNullOrWhiteSpace())
             {
-                request.AddFormParameter("category", settings.Category);
+                request.AddFormParameter("category", category);
             }
 
             // Note: ForceStart is handled by separate api call
@@ -159,7 +176,7 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
             {
                 request.AddFormParameter("paused", false);
             }
-            else if ((QBittorrentState)settings.InitialState == QBittorrentState.Pause)
+            else if ((QBittorrentState)settings.InitialState == QBittorrentState.Stop)
             {
                 request.AddFormParameter("paused", true);
             }
@@ -195,7 +212,7 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
             catch (DownloadClientException ex)
             {
                 // if setCategory fails due to method not being found, then try older setLabel command for qBittorrent < v.3.3.5
-                if (ex.InnerException is HttpException && (ex.InnerException as HttpException).Response.StatusCode == HttpStatusCode.NotFound)
+                if (ex.InnerException is HttpException httpException && httpException.Response.StatusCode == HttpStatusCode.NotFound)
                 {
                     var setLabelRequest = BuildRequest(settings).Resource("/command/setLabel")
                                                                 .Post()
@@ -237,29 +254,13 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
             catch (DownloadClientException ex)
             {
                 // qBittorrent rejects all Prio commands with 403: Forbidden if Options -> BitTorrent -> Torrent Queueing is not enabled
-                if (ex.InnerException is HttpException && (ex.InnerException as HttpException).Response.StatusCode == HttpStatusCode.Forbidden)
+                if (ex.InnerException is HttpException httpException && httpException.Response.StatusCode == HttpStatusCode.Forbidden)
                 {
                     return;
                 }
 
                 throw;
             }
-        }
-
-        public void PauseTorrent(string hash, QBittorrentSettings settings)
-        {
-            var request = BuildRequest(settings).Resource("/command/pause")
-                                                 .Post()
-                                                 .AddFormParameter("hash", hash);
-            ProcessRequest(request, settings);
-        }
-
-        public void ResumeTorrent(string hash, QBittorrentSettings settings)
-        {
-            var request = BuildRequest(settings).Resource("/command/resume")
-                                                .Post()
-                                                .AddFormParameter("hash", hash);
-            ProcessRequest(request, settings);
         }
 
         public void SetForceStart(string hash, bool enabled, QBittorrentSettings settings)
@@ -276,7 +277,7 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
             var requestBuilder = new HttpRequestBuilder(settings.UseSsl, settings.Host, settings.Port, settings.UrlBase)
             {
                 LogResponseContent = true,
-                NetworkCredential = new NetworkCredential(settings.Username, settings.Password)
+                NetworkCredential = new BasicNetworkCredential(settings.Username, settings.Password)
             };
             return requestBuilder;
         }
@@ -295,15 +296,14 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
 
             var request = requestBuilder.Build();
             request.LogResponseContent = true;
+            request.SuppressHttpErrorStatusCodes = new[] { HttpStatusCode.Forbidden };
 
             HttpResponse response;
             try
             {
                 response = _httpClient.Execute(request);
-            }
-            catch (HttpException ex)
-            {
-                if (ex.Response.StatusCode == HttpStatusCode.Forbidden)
+
+                if (response.StatusCode == HttpStatusCode.Forbidden)
                 {
                     _logger.Debug("Authentication required, logging in.");
 
@@ -313,10 +313,10 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
 
                     response = _httpClient.Execute(request);
                 }
-                else
-                {
-                    throw new DownloadClientException("Failed to connect to qBittorrent, check your settings.", ex);
-                }
+            }
+            catch (HttpException ex)
+            {
+                throw new DownloadClientException("Failed to connect to qBittorrent, check your settings.", ex);
             }
             catch (WebException ex)
             {
@@ -367,9 +367,9 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
                     throw new DownloadClientUnavailableException("Failed to connect to qBittorrent, please check your settings.", ex);
                 }
 
-                // returns "Fails." on bad login
                 if (response.Content != "Ok.")
                 {
+                    // returns "Fails." on bad login
                     _logger.Debug("qbitTorrent authentication failed.");
                     throw new DownloadClientAuthenticationException("Failed to authenticate with qBittorrent.");
                 }
